@@ -1,19 +1,21 @@
 import { getServerSession } from 'next-auth';
 import { getAllLibraryFiles } from '@/lib/googleDrive';
+import { getLocalLibraryFiles, hasLocalLibrary } from '@/lib/localLibrary';
 import authOptions from '@/lib/auth';
 import type { BookEntry } from '@/types/books';
 
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
-  console.log('GET /api/library session exists:', Boolean(session));
-  console.log('GET /api/library session.accessToken:', session?.accessToken);
 
-  if (!session?.accessToken) {
+  if (!session?.accessToken && !hasLocalLibrary()) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const books: BookEntry[] = await getAllLibraryFiles(session.accessToken);
+    const books: BookEntry[] = [
+      ...(hasLocalLibrary() ? await getLocalLibraryFiles() : []),
+      ...(session?.accessToken ? await getAllLibraryFiles(session.accessToken) : []),
+    ];
     return Response.json(books);
   } catch (error) {
     console.error('Failed to fetch library:', error);

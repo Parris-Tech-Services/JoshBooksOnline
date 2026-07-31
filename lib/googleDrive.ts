@@ -4,7 +4,7 @@ import type { BookEntry, LibrarySource, BookFormat } from '@/types/books';
 /**
  * Google Drive folder IDs for the three fixed library sources
  */
-const FIXED_FOLDERS: Record<Exclude<LibrarySource, 'Local Books'>, string> = {
+export const FIXED_FOLDERS: Record<Exclude<LibrarySource, 'Local Books'>, string> = {
   'IT PD Ebooks': '13bvVMhL0iGxOfFS9nOBk7eGhh6708kbp',
   'Book Club': '1FxuWDsjoRK9DUxdCoPefxea0eqR6EblU',
   Unsorted: '0B9UqG6BQI95fb0xsOElucWx3LUE',
@@ -33,6 +33,8 @@ export function getOAuthClient(accessToken: string) {
 function getMimeTypeFormat(mimeType: string): BookFormat | null {
   if (mimeType === 'application/pdf') return 'pdf';
   if (mimeType === 'application/epub+zip') return 'epub';
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
+  if (mimeType === 'text/plain') return 'txt';
   return null;
 }
 
@@ -66,7 +68,7 @@ export async function listFilesInFolder(
 
   do {
     const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (mimeType = 'application/pdf' or mimeType = 'application/epub+zip')`,
+      q: `'${folderId}' in parents and trashed = false and (mimeType = 'application/pdf' or mimeType = 'application/epub+zip' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType = 'text/plain')`,
       fields:
         'nextPageToken, files(id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties)',
       pageSize: 100,
@@ -226,6 +228,81 @@ export async function getFileMetadata(
   }
 }
 
+interface DriveFolderItem {
+  id: string;
+  name: string;
+  mimeType: string;
+}
+
+export async function listFolderItems(
+  accessToken: string,
+  folderId: string
+): Promise<DriveFolderItem[]> {
+  const auth = getOAuthClient(accessToken);
+  const drive = google.drive({ version: 'v3', auth });
+
+  const items: DriveFolderItem[] = [];
+  let pageToken: string | null | undefined;
+
+  do {
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: 'nextPageToken, files(id, name, mimeType)',
+      pageSize: 100,
+      pageToken: pageToken ?? undefined,
+    });
+
+    const files = response.data.files || [];
+    for (const file of files) {
+      if (file.id && file.name && file.mimeType) {
+        items.push({ id: file.id, name: file.name, mimeType: file.mimeType });
+      }
+    }
+
+    pageToken = response.data.nextPageToken;
+  } while (pageToken);
+
+  return items;
+}
+
+export function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\p{P}$+<=>^`|~]/gu, ' ')
+    .replace(/\b(the|a|an|book|ebook|audiobook|audio|series|volume|vol|part|chapter|disc|cd)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function hasCommonNGram(a: string, b: string, n = 3): boolean {
+  const aWords = a.split(' ').filter(Boolean);
+  const bText = b.split(' ').filter(Boolean).join(' ');
+
+  for (let i = 0; i + n <= aWords.length; i += 1) {
+    const nGram = aWords.slice(i, i + n).join(' ');
+    if (bText.includes(nGram)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function fuzzyMatchNames(a: string, b: string): boolean {
+  const normalizedA = normalizeText(a);
+  const normalizedB = normalizeText(b);
+
+  if (!normalizedA || !normalizedB) {
+    return false;
+  }
+
+  if (normalizedA.includes(normalizedB) || normalizedB.includes(normalizedA)) {
+    return true;
+  }
+
+  return hasCommonNGram(normalizedA, normalizedB, 3) || hasCommonNGram(normalizedB, normalizedA, 3);
+}
+
 /**
  * Add an imported file to the Unsorted folder by making Unsorted a parent
  * This ensures the file appears in the library listing without moving it
@@ -283,7 +360,7 @@ export async function listFilesInFolderRecursive(
 
   do {
     const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (mimeType = 'application/pdf' or mimeType = 'application/epub+zip' or mimeType = 'application/vnd.google-apps.folder')`,
+      q: `'${folderId}' in parents and trashed = false and (mimeType = 'application/pdf' or mimeType = 'application/epub+zip' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType = 'text/plain' or mimeType = 'application/vnd.google-apps.folder')`,
       fields:
         'nextPageToken, files(id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties)',
       pageSize: 100,

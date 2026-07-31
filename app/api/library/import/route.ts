@@ -81,7 +81,12 @@ export async function POST(request: NextRequest) {
           }
 
           // Determine if it's a supported format
-          const supportedFormats = ['application/pdf', 'application/epub+zip'];
+          const supportedFormats = [
+            'application/pdf',
+            'application/epub+zip',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'text/plain',
+          ];
           if (!supportedFormats.includes(metadata.mimeType)) {
             errors.push({
               itemName: item.name,
@@ -89,6 +94,13 @@ export async function POST(request: NextRequest) {
             });
             continue;
           }
+
+          const formatMap: Record<string, 'pdf' | 'epub' | 'docx' | 'txt'> = {
+            'application/pdf': 'pdf',
+            'application/epub+zip': 'epub',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'text/plain': 'txt',
+          };
 
           // Create BookEntry for this file
           // Use the name from the Picker (item.name) as it's the correct filename
@@ -100,7 +112,7 @@ export async function POST(request: NextRequest) {
             size: metadata.size,
             modifiedTime: metadata.modifiedTime,
             source: 'Unsorted',
-            format: metadata.mimeType === 'application/pdf' ? 'pdf' : 'epub',
+            format: formatMap[metadata.mimeType],
             readingProgress: 0,
             lastLocation: '',
           };

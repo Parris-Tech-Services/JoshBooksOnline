@@ -34,8 +34,5 @@ export default function ReaderPage() {
   const params = useParams() as Record<string, string> | null;
   const fileId = params?.fileId;
 
-  // Temporary debug log to verify route param resolution in-browser
-  console.log('Resolved fileId:', fileId);
-
   return <ReaderShell fileId={fileId} EpubReader={EpubReader} PdfReader={PdfReader} />;
 }

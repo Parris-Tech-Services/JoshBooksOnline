@@ -31,7 +31,8 @@ export default function ReaderShell({ fileId, EpubReader, PdfReader }: ReaderShe
 
   useEffect(() => {
     if (status === 'loading' || !fileId) return;
-    if (!accessToken) {
+    const isLocal = fileId.startsWith('local:');
+    if (!accessToken && !isLocal) {
       setError('Authentication is required to load this book.');
       setLoading(false);
       return;
@@ -42,15 +43,19 @@ export default function ReaderShell({ fileId, EpubReader, PdfReader }: ReaderShe
 
     const fetchMetadata = async () => {
       try {
-        const metadataResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,appProperties`,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-            cache: 'no-store',
-          }
-        );
+        const metadataResponse = isLocal
+          ? await fetch(`/api/library/local/${encodeURIComponent(fileId)}?metadata=1`, {
+              cache: 'no-store',
+            })
+          : await fetch(
+              `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,appProperties`,
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                cache: 'no-store',
+              }
+            );
 
         if (!metadataResponse.ok) {
           const body = await metadataResponse.text();
@@ -70,18 +75,22 @@ export default function ReaderShell({ fileId, EpubReader, PdfReader }: ReaderShe
   }, [accessToken, fileId, status]);
 
   useEffect(() => {
-    if (!metadata || !accessToken || !fileId) return;
+    if (!metadata || !fileId) return;
+    const isLocal = fileId.startsWith('local:');
+    if (!accessToken && !isLocal) return;
     const fetchBinary = async () => {
       try {
-        const binaryResponse = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-            },
-            cache: 'no-store',
-          }
-        );
+        const binaryResponse = isLocal
+          ? await fetch(`/api/library/local/${encodeURIComponent(fileId)}`, { cache: 'no-store' })
+          : await fetch(
+              `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+              {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                cache: 'no-store',
+              }
+            );
 
         if (!binaryResponse.ok) {
           const body = await binaryResponse.text();

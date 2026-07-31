@@ -4,7 +4,15 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { signOut } from 'next-auth/react';
 import { DrivePicker } from '@/components/DrivePicker';
+import { YouTubeAudiobooks } from '@/components/YouTubeAudiobooks';
 import type { BookEntry } from '@/types/books';
+
+interface AudiobookMatch {
+  audiobookName: string;
+  audiobookFolderId: string;
+  matchedEbook: BookEntry | null;
+  alreadyImported: boolean;
+}
 
 const SOURCE_BADGES: Record<string, string> = {
   'IT PD Ebooks': 'bg-amber-500 text-slate-950',
@@ -22,6 +30,21 @@ const FORMAT_BADGES: Record<string, string> = {
   pdf: 'bg-red-600 text-white',
   epub: 'bg-teal-600 text-white',
 };
+
+const AUDIOBOOK_FOLDERS = [
+  {
+    audiobookName: 'Outlander Series',
+    audiobookFolderId: '1SBqmfghmj5gqxWRnCrxbHP65I23ohlcQ',
+  },
+  {
+    audiobookName: 'Other Audiobooks',
+    audiobookFolderId: '1NRY6dXCpILRzfG4yYTpisGqLnqx2ECEQ',
+  },
+];
+
+function getDriveFolderUrl(folderId: string) {
+  return `https://drive.google.com/drive/folders/${folderId}`;
+}
 
 function getInitials(title: string) {
   return title
@@ -64,6 +87,9 @@ export default function LibraryPage() {
     type: 'idle',
     message: '',
   });
+  const [audiobookMatches, setAudiobookMatches] = useState<AudiobookMatch[] | null>(null);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
 
   const refreshLibrary = async () => {
     setLoading(true);
@@ -110,9 +136,68 @@ export default function LibraryPage() {
     }, 5000);
   };
 
+  const importMatchedEbook = async (ebook: BookEntry | null) => {
+    if (!ebook) return;
+
+    handleImportStart();
+
+    try {
+      const response = await fetch('/api/library/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [
+            {
+              id: ebook.id,
+              name: ebook.name,
+              mimeType: ebook.mimeType,
+              type: 'file',
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || 'Import failed');
+      }
+
+      const result = await response.json();
+      handleImportComplete(result.importedCount || 0);
+      loadAudiobookMatches();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Import failed';
+      handleImportError(message);
+    }
+  };
+
   useEffect(() => {
     refreshLibrary();
+    loadAudiobookMatches();
   }, []);
+
+  const loadAudiobookMatches = async () => {
+    setMatchLoading(true);
+    setMatchError(null);
+
+    try {
+      const response = await fetch('/api/audiobooks/match', { cache: 'no-store' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        setMatchError(body?.error ?? 'Failed to load audiobook matches');
+        setAudiobookMatches([]);
+        return;
+      }
+
+      const data = (await response.json()) as AudiobookMatch[];
+      setAudiobookMatches(data);
+    } catch (err) {
+      setMatchError('Unable to fetch audiobook matches.');
+      setAudiobookMatches([]);
+    } finally {
+      setMatchLoading(false);
+    }
+  };
 
   const filteredBooks = useMemo(() => {
     if (!books) return [];
@@ -128,6 +213,40 @@ export default function LibraryPage() {
       );
     });
   }, [books, search]);
+
+  const getMatchForAudiobook = (audiobookName: string): AudiobookMatch | null => {
+    return audiobookMatches?.find((match) => match.audiobookName === audiobookName) ?? null;
+  };
+
+  const renderMatchCard = (audiobookName: string) => {
+    const match = getMatchForAudiobook(audiobookName);
+    if (!match || !match.matchedEbook) return null;
+
+    return (
+      <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/90 p-4">
+        <p className="text-sm text-slate-400">📖 Matching ebook found:</p>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span className="truncate text-sm font-medium text-white">{match.matchedEbook.name}</span>
+          {match.alreadyImported ? (
+            <Link
+              href={`/reader/${match.matchedEbook.id}`}
+              className="inline-flex items-center rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-700 transition"
+            >
+              Open in reader
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => importMatchedEbook(match.matchedEbook)}
+              className="inline-flex items-center rounded-full bg-sky-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-sky-400 transition"
+            >
+              Import to Library
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 p-6 sm:p-10">
@@ -275,6 +394,8 @@ export default function LibraryPage() {
               ))}
             </section>
 
+            <YouTubeAudiobooks />
+
             <section className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 shadow-xl shadow-black/10 transition">
               <div className="mb-6 flex items-center justify-between gap-4">
                 <div>
@@ -284,40 +405,58 @@ export default function LibraryPage() {
                   </p>
                 </div>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <a
-                  href="https://drive.google.com/drive/folders/1SBqmfghmj5gqxWRnCrxbHP65I23ohlcQ"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="group rounded-3xl border border-white/10 bg-slate-950/80 p-5 transition hover:border-slate-500/40 hover:bg-slate-900"
-                >
+                  <div className="grid gap-4 sm:grid-cols-2">
+                <div className="group rounded-3xl border border-white/10 bg-slate-950/80 p-5 transition hover:border-slate-500/40 hover:bg-slate-900">
                   <div className="flex items-center gap-3">
                     <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-500 text-lg text-white">
                       🎧
                     </span>
                     <div>
                       <p className="text-lg font-semibold text-white">Outlander Series</p>
-                      <p className="mt-1 text-sm text-slate-400">Open Drive folder</p>
+                      <p className="mt-1 text-sm">
+                        <a
+                          href={getDriveFolderUrl(AUDIOBOOK_FOLDERS[0].audiobookFolderId)}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-sky-400 hover:text-sky-300"
+                        >
+                          Open Drive folder
+                        </a>
+                      </p>
                     </div>
                   </div>
-                </a>
+                  {matchLoading ? (
+                    <p className="mt-4 text-sm text-slate-400">Matching audiobook...</p>
+                  ) : audiobookMatches ? (
+                    renderMatchCard('Outlander Series')
+                  ) : null}
+                </div>
 
-                <a
-                  href="https://drive.google.com/drive/folders/1NRY6dXCpILRzfG4yYTpisGqLnqx2ECEQ"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="group rounded-3xl border border-white/10 bg-slate-950/80 p-5 transition hover:border-slate-500/40 hover:bg-slate-900"
-                >
+                <div className="group rounded-3xl border border-white/10 bg-slate-950/80 p-5 transition hover:border-slate-500/40 hover:bg-slate-900">
                   <div className="flex items-center gap-3">
                     <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-500 text-lg text-white">
                       🎧
                     </span>
                     <div>
                       <p className="text-lg font-semibold text-white">Other Audiobooks</p>
-                      <p className="mt-1 text-sm text-slate-400">Open Drive folder</p>
+                      <p className="mt-1 text-sm">
+                        <a
+                          href={getDriveFolderUrl(AUDIOBOOK_FOLDERS[1].audiobookFolderId)}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="text-sky-400 hover:text-sky-300"
+                        >
+                          Open Drive folder
+                        </a>
+                      </p>
                     </div>
                   </div>
-                </a>
+                  {matchLoading ? (
+                    <p className="mt-4 text-sm text-slate-400">Matching audiobook...</p>
+                  ) : audiobookMatches ? (
+                    renderMatchCard('Other Audiobooks')
+                  ) : null}
+                </div>
               </div>
             </section>
           </>
