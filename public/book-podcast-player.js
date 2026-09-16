@@ -28,6 +28,9 @@
   ];
 
   const STORAGE_KEY = 'joshbooks-independent-podcast-v1';
+  const VISIBILITY_KEY = 'joshbooks-podcast-button-hidden-v1';
+  const VISIBILITY_EVENT = 'joshbooks:podcast-visibility';
+  const VISIBILITY_CHANGED_EVENT = 'joshbooks:podcast-visibility-changed';
 
   class BookPodcastPlayer extends HTMLElement {
     constructor() {
@@ -36,6 +39,7 @@
       this.open = false;
       this.currentIndex = 0;
       this.recent = [];
+      this.hiddenByUser = false;
 
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -45,6 +49,7 @@
         if (Array.isArray(saved.recent)) {
           this.recent = saved.recent.filter((n) => Number.isInteger(n) && n >= 0 && n < episodes.length).slice(0, 6);
         }
+        this.hiddenByUser = localStorage.getItem(VISIBILITY_KEY) === '1';
       } catch (_) {}
 
       this.handleExternalPlay = (event) => {
@@ -54,21 +59,38 @@
           this.render();
         }
       };
+
+      this.handleVisibilityRequest = (event) => {
+        const hidden = Boolean(event && event.detail && event.detail.hidden);
+        this.setHidden(hidden);
+      };
     }
 
     connectedCallback() {
       document.addEventListener('play', this.handleExternalPlay, true);
+      window.addEventListener(VISIBILITY_EVENT, this.handleVisibilityRequest);
       this.render();
     }
 
     disconnectedCallback() {
       document.removeEventListener('play', this.handleExternalPlay, true);
+      window.removeEventListener(VISIBILITY_EVENT, this.handleVisibilityRequest);
     }
 
     save() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ currentIndex: this.currentIndex, recent: this.recent.slice(0, 6) }));
       } catch (_) {}
+    }
+
+    setHidden(hidden) {
+      this.hiddenByUser = Boolean(hidden);
+      if (this.hiddenByUser) this.open = false;
+      try {
+        localStorage.setItem(VISIBILITY_KEY, this.hiddenByUser ? '1' : '0');
+      } catch (_) {}
+      window.dispatchEvent(new CustomEvent(VISIBILITY_CHANGED_EVENT, { detail: { hidden: this.hiddenByUser } }));
+      this.render();
     }
 
     chooseDifferent() {
@@ -88,24 +110,32 @@
         <style>
           :host{position:relative;z-index:2147483000;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
           button,a{font:inherit}
-          .launcher{position:fixed;left:50%;bottom:max(12px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:2147483000;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:#2a2019;color:#fff8ec;padding:12px 18px;font-weight:750;box-shadow:0 12px 34px rgba(0,0,0,.34);cursor:pointer;touch-action:manipulation;white-space:nowrap}
+          .launcher-wrap{position:fixed;left:50%;bottom:max(12px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:6px}
+          .launcher{border:1px solid rgba(255,255,255,.16);border-radius:999px;background:#2a2019;color:#fff8ec;padding:12px 18px;font-weight:750;box-shadow:0 12px 34px rgba(0,0,0,.34);cursor:pointer;touch-action:manipulation;white-space:nowrap}
+          .hide-launcher{width:34px;height:34px;flex:0 0 34px;border:1px solid rgba(255,255,255,.18);border-radius:50%;background:#17120f;color:#f0e3d4;font-size:20px;line-height:1;box-shadow:0 10px 26px rgba(0,0,0,.3);cursor:pointer;touch-action:manipulation}
           .panel{position:fixed;left:50%;bottom:max(8px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:2147483000;width:min(620px,calc(100vw - 16px));box-sizing:border-box;border:1px solid #705a49;border-radius:18px;background:#211812;color:#fff8ec;padding:14px;box-shadow:0 20px 60px rgba(0,0,0,.58)}
           .head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}.kicker{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#e7bc83}.title{font-size:16px;line-height:1.3;margin:4px 0 0}.meta{font-size:12px;line-height:1.45;color:#dacbbb;margin:5px 0 0}.close{width:40px;height:40px;flex:0 0 40px;border:1px solid #705a49;border-radius:50%;background:#38281e;color:#fff8ec;font-size:22px;cursor:pointer;touch-action:manipulation}.frame{display:block;width:100%;height:152px;border:0;border-radius:12px;background:#0d0907}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.action,.link{border-radius:10px;padding:9px 12px;font-weight:750;text-decoration:none;cursor:pointer;touch-action:manipulation}.action{border:0;background:#8a5c30;color:#fff}.link{display:inline-flex;align-items:center;border:1px solid #705a49;background:#38281e;color:#fff8ec}.note{font-size:11px;color:#baa997;margin:9px 0 0}
-          @media(max-width:640px){.panel{width:calc(100vw - 10px);padding:11px}.actions>*{flex:1;justify-content:center;text-align:center}}
+          @media(max-width:640px){.panel{width:calc(100vw - 10px);padding:11px}.actions>*{flex:1;justify-content:center;text-align:center}.launcher{padding:11px 15px}.hide-launcher{width:32px;height:32px;flex-basis:32px}}
         </style>
-        ${this.open ? `
+        ${this.hiddenByUser && !this.open ? '' : this.open ? `
           <aside class="panel" aria-label="JoshBooks podcast player">
             <div class="head"><div><div class="kicker">JoshBooks · reading radio</div><h2 class="title"></h2><p class="meta"></p></div><button class="close" type="button" aria-label="Close podcast player">×</button></div>
             <iframe class="frame" title="Spotify podcast episode" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>
             <div class="actions"><button class="action different" type="button">📚 Different podcast</button><a class="link" target="_blank" rel="noopener noreferrer">Open in Spotify ↗</a></div>
             <p class="note">Independent 25-episode book podcast bank stored inside JoshBooksOnline.</p>
-          </aside>` : '<button class="launcher" type="button" aria-label="Open book podcasts">🎧 Podcasts</button>'}
+          </aside>` : '<div class="launcher-wrap"><button class="launcher" type="button" aria-label="Open book podcasts">🎧 Podcasts</button><button class="hide-launcher" type="button" aria-label="Hide podcast button" title="Hide podcast button">×</button></div>'}
       `;
+
+      if (this.hiddenByUser && !this.open) return;
 
       if (!this.open) {
         this.shadowRoot.querySelector('.launcher').addEventListener('click', () => {
           this.open = true;
           this.render();
+        });
+        this.shadowRoot.querySelector('.hide-launcher').addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.setHidden(true);
         });
         return;
       }
