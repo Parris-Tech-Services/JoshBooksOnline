@@ -34,14 +34,7 @@ export default function RootLayout({
           <OfflineBanner />
           {children}
         </AuthProvider>
-        <script
-          src="https://cdn.jsdelivr.net/gh/joshualparris/JoshHub@ebb0d17495c92d3ce09df1fd1bdb5d4c2056914d/public/podcast-launcher-v3.js"
-          data-bank="books"
-          data-label="📚 Listen to a different books podcast"
-          data-launcher-label="🎧 Podcasts"
-          data-quiet-on-input="true"
-          defer
-        />
+        <script src="/book-podcast-player.js?v=1" defer />
       </body>
     </html>
   );
