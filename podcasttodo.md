@@ -1,18 +1,19 @@
 # Podcast Integration TODO
 
 **Decision:** Add — high-value fit.  
-**Status:** ✅ Core one-click podcast bank added 13 September 2026.
+**Status:** ✅ Independent podcast player live in the app.
 **Topic bank:** books, authors, literature, publishing, literary analysis, reading, book history.
 
 ## TODO
-- [x] Curate 25 unique Spotify episodes on books/authors/literature in the shared JoshHub `books` bank.
-- [x] Add a collapsed bottom dock: **📚 Listen to a different books podcast**.
-- [x] One tap selects/loads another episode; persist recent selections and avoid immediate repeats.
+- [x] Curate 25 unique Spotify episodes on books/authors/literature.
+- [x] Store the 25-episode catalogue directly inside JoshBooksOnline so playback does not depend on JoshHub or jsDelivr.
+- [x] Add a collapsed bottom **🎧 Podcasts** launcher.
+- [x] One tap opens an episode; **📚 Different podcast** avoids the current/recent selections and remembers state in `localStorage`.
 - [x] Use Spotify embed/deep links without assuming autoplay.
-- [x] Collapse the podcast dock whenever an audiobook, movie or other HTML audio/video is playing.
+- [x] Close the podcast panel whenever an audiobook, movie or other HTML audio/video starts playing.
 - [ ] Optionally tag/recommend episodes by author, genre or current book metadata — future enhancement.
-- [x] Keep episode data separate from reader/player code and easy to refresh through JoshHub.
-- [x] Shared dock provides mobile/a11y, reduced-motion, persistence and audio-conflict behaviour; repo-specific automated tests can be added later.
+- [x] Keep the podcast implementation isolated from the main React/Next reader by using a local Web Component with Shadow DOM.
+- [x] Keep JoshBooks fully usable if Spotify is unavailable.
 
 ## Implementation
-The root Next.js layout loads `podcast-dock-universal.js` with `data-bank="books"`. JoshBooks remains fully usable if Spotify is unavailable.
+`app/layout.tsx` loads only the local `/book-podcast-player.js` file. That file defines and mounts an isolated `<book-podcast-player>` Web Component, contains the 25-episode catalogue, persists local selection history, and renders Spotify embeds directly. It has no JoshHub, jsDelivr or shared podcast-runtime dependency.
