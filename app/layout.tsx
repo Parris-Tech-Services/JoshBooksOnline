@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "./providers";
 import OfflineBanner from "@/components/OfflineBanner";
@@ -34,7 +35,11 @@ export default function RootLayout({
           <OfflineBanner />
           {children}
         </AuthProvider>
-        <script src="/book-podcast-player.js?v=1" defer />
+        <Script
+          id="joshbooks-podcast-player"
+          src="/book-podcast-player.js?v=2"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );
