@@ -3,6 +3,7 @@ import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "./providers";
 import OfflineBanner from "@/components/OfflineBanner";
+import PodcastVisibilitySettings from "@/components/PodcastVisibilitySettings";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -34,10 +35,11 @@ export default function RootLayout({
         <AuthProvider>
           <OfflineBanner />
           {children}
+          <PodcastVisibilitySettings />
         </AuthProvider>
         <Script
           id="joshbooks-podcast-player"
-          src="/book-podcast-player.js?v=2"
+          src="/book-podcast-player.js?v=3"
           strategy="afterInteractive"
         />
       </body>
