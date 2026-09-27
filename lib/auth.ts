@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { type NextAuthOptions, type DefaultSession } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 
@@ -20,6 +21,23 @@ declare module 'next-auth/jwt' {
   }
 }
 
+const LEGACY_ALLOWED_EMAIL_SHA256 = 'dcf7a9679f97f67fa02fb0f540bfa869b070c33161e5fc15fbf0e6adb056cbfb';
+
+function allowedEmail(email: string | null | undefined): boolean {
+  const normalized = email?.trim().toLowerCase();
+  if (!normalized) return false;
+
+  const configured = (process.env.ALLOWED_GOOGLE_EMAILS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (configured.length > 0) return configured.includes(normalized);
+
+  const digest = createHash('sha256').update(normalized).digest();
+  const expected = Buffer.from(LEGACY_ALLOWED_EMAIL_SHA256, 'hex');
+  return digest.length === expected.length && timingSafeEqual(digest, expected);
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
@@ -38,6 +56,9 @@ export const authOptions: NextAuthOptions = {
     strategy: 'jwt',
   },
   callbacks: {
+    async signIn({ user }) {
+      return allowedEmail(user.email);
+    },
     async jwt({ token, account }) {
       if (account) {
         token.accessToken = account.access_token;
