@@ -13,14 +13,14 @@ A single-user library for reading ebooks, listening to Drive and YouTube audiobo
 
 ## Google Cloud Setup
 
-This app uses an **Internal** Google Workspace OAuth app in the `cornerstone.edu.au` organization.
+This app uses a Google OAuth app. Keep tenant, account and project identifiers out of this public repository.
 
 ### 1. Confirm the GCP project
 
-- Project ID: `bookshelf-499102`
+- Project ID: configure this privately in Google Cloud
 - Google Drive API: enabled
-- OAuth consent screen: **Internal**
-- OAuth Client ID: `369014421608-mvokv1jp2avd998jsps7vcv1f1pvjitj.apps.googleusercontent.com`
+- OAuth consent screen: configure the narrowest audience appropriate for your account
+- OAuth Client ID: store in the deployment environment, not documentation
 - Authorized redirect URI (dev): `http://localhost:3000/api/auth/callback/google`
 
 ### 2. Enable the Google Drive API
@@ -46,11 +46,11 @@ This app uses an **Internal** Google Workspace OAuth app in the `cornerstone.edu
    - `http://localhost:3000/api/auth/callback/google`
 5. Save the **Client ID** and **Client Secret** securely
 
-### 5. Internal Workspace notes
+### 5. Access-control notes
 
-- No external test users are required for an internal app
-- No unverified app warning should appear for Workspace users in the same org
-- OAuth refresh tokens do not expire every 7 days in this configuration
+- JoshBooks enforces an application-level owner allowlist in addition to Google OAuth.
+- Set `ALLOWED_GOOGLE_EMAILS` privately in the deployment environment if you want to replace the built-in legacy owner digest.
+- Never publish tenant names, personal email addresses, OAuth client IDs or credential screenshots in this repository.
 
 ### Troubleshooting
 
