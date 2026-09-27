@@ -1,0 +1,26 @@
+name: Resolve JoshBooks offline podcast sources
+on:
+  push:
+    branches: [main, deploy-ready]
+    paths:
+      - 'tools/resolve-offline-podcast-sources.mjs'
+      - '.github/workflows/resolve-offline-podcast-sources.yml'
+permissions:
+  contents: write
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: node tools/resolve-offline-podcast-sources.mjs
+      - name: Commit source map
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add research/offline-podcast-sources.json
+          git diff --cached --quiet && exit 0
+          git commit -m "research: map podcasts to offline media"
+          git push
