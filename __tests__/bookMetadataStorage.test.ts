@@ -47,7 +47,7 @@ const full: BookMetadata = {
   language: 'en',
   isbn: '9780261102354',
   googleBooksId: 'gb123',
-  metadataSource: 'googlebooks',
+  metadataSource: 'google-books',
 } as BookMetadata;
 
 describe('updateBookMetadata storage', () => {
@@ -65,7 +65,7 @@ describe('updateBookMetadata storage', () => {
       pageCount: 423,
       language: 'en',
       isbn: full.isbn,
-      metadataSource: 'googlebooks',
+      metadataSource: 'google-books',
       coverUrl: expect.stringContaining('id=gb123'),
     });
   });
