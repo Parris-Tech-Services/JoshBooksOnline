@@ -17,8 +17,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: TypeScript check
+        run: npm run typecheck
       - name: Run tests with LCOV coverage
         run: npm test -- --coverage --runInBand
+      - name: Production build
+        run: npm run build
       - name: Run TypeScript-aware CRAP4all audit
         run: node scripts/crap4all-typescript.mjs
       - uses: actions/setup-python@v5
