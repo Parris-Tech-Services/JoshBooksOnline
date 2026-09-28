@@ -46,6 +46,7 @@ describe('Google Drive library helpers', () => {
                 progressPercentage: '25',
                 lastLocation: 'page-4',
                 m_title: 'One',
+                m_src: 'manual',
               },
             },
             {
