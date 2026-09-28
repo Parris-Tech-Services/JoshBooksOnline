@@ -61,6 +61,9 @@ const AUDIO_MIME_TYPES = new Set([
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const SHORTCUT_MIME = 'application/vnd.google-apps.shortcut';
 
+type DriveClient = drive_v3.Drive;
+type DriveFile = drive_v3.Schema$File;
+
 const AUDIO_FILE_EXTENSIONS = new Set([
   '.mp3',
   '.m4a',
@@ -459,76 +462,70 @@ function parseAppProperties(appProperties?: Record<string, string>) {
   };
 }
 
+const BOOK_FILE_FIELDS = 'id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties';
+
+/** Books the user removed from the library stay in Drive but are marked hidden. */
+function isHiddenFromLibrary(file: DriveFile): boolean {
+  return (file.appProperties as Record<string, string> | undefined)?.m_hidden === '1';
+}
+
+/** Builds a library entry; `id`/`mimeType` may be a shortcut's target rather than the file's own. */
+function toBookEntry(
+  file: DriveFile,
+  target: { id: string; mimeType: string; format: BookFormat },
+  source: LibrarySource
+): BookEntry {
+  const appProps = parseAppProperties(file.appProperties as Record<string, string> | undefined);
+  return {
+    id: target.id,
+    name: file.name!,
+    mimeType: target.mimeType,
+    size: file.size ? parseInt(file.size as string, 10) : 0,
+    modifiedTime: file.modifiedTime!,
+    thumbnailLink: file.thumbnailLink ?? undefined,
+    source,
+    format: target.format,
+    readingProgress: appProps.readingProgress,
+    lastLocation: appProps.lastLocation,
+    lastOpened: appProps.lastOpened,
+    ...appProps.metadata,
+  };
+}
+
+/** The book a listed file stands for: a shortcut stands for its target. */
+function bookTarget(file: DriveFile): { id: string; mimeType: string; format: BookFormat } | null {
+  const isShortcut = file.mimeType === SHORTCUT_MIME;
+  const mimeType = isShortcut ? file.shortcutDetails?.targetMimeType ?? '' : file.mimeType!;
+  const format = getMimeTypeFormat(mimeType);
+  if (!format) return null;
+  const id = isShortcut ? file.shortcutDetails?.targetId ?? file.id! : file.id!;
+  return { id, mimeType, format };
+}
+
 /**
- * List all PDF and EPUB files in a specific Drive folder
- * Handles pagination automatically
+ * List the supported books directly inside a Drive folder, following
+ * shortcuts and listing each book once. Handles pagination.
  */
 export async function listFilesInFolder(
   accessToken: string,
   folderId: string,
   source: LibrarySource
 ): Promise<BookEntry[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  const files = await listAllChildren(drive, folderId, `${BOOK_FILE_FIELDS}, shortcutDetails`, {
+    where: `${SUPPORTED_MIME_QUERY} or mimeType = '${SHORTCUT_MIME}'`,
+    pageSize: 100,
+  });
 
   const books: BookEntry[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (${SUPPORTED_MIME_QUERY} or mimeType = '${SHORTCUT_MIME}')`,
-      fields:
-        'nextPageToken, files(id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties, shortcutDetails)',
-      pageSize: 100,
-      pageToken: pageToken ?? undefined,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-
-    const files = response.data.files || [];
-    for (const file of files) {
-      // For shortcuts, use the target's mimeType and id
-      const effectiveMimeType =
-        file.mimeType === SHORTCUT_MIME
-          ? (file.shortcutDetails as { targetMimeType?: string } | undefined)?.targetMimeType ?? ''
-          : file.mimeType!;
-      const effectiveId =
-        file.mimeType === SHORTCUT_MIME
-          ? (file.shortcutDetails as { targetId?: string } | undefined)?.targetId ?? file.id!
-          : file.id!;
-
-      const format = getMimeTypeFormat(effectiveMimeType);
-      if (!format) continue; // Skip unsupported formats
-
-      // Use effective id for dedup check (avoid showing both shortcut and original)
-      if (books.some((b) => b.id === effectiveId)) continue;
-
-      // Skip books the user has removed from the library (hidden, file left in Drive)
-      if ((file.appProperties as Record<string, string> | undefined)?.m_hidden === '1') continue;
-
-      const appProps = parseAppProperties(
-        file.appProperties as Record<string, string> | undefined
-      );
-
-      books.push({
-        id: effectiveId,
-        name: file.name!,
-        mimeType: effectiveMimeType,
-        size: file.size ? parseInt(file.size as string, 10) : 0,
-        modifiedTime: file.modifiedTime!,
-        thumbnailLink: file.thumbnailLink ?? undefined,
-        source,
-        format,
-        readingProgress: appProps.readingProgress,
-        lastLocation: appProps.lastLocation,
-        lastOpened: appProps.lastOpened,
-        ...appProps.metadata,
-      });
-    }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
+  const seenIds = new Set<string>();
+  for (const file of files) {
+    const target = bookTarget(file);
+    // A shortcut and its original are the same book: keep whichever comes first.
+    if (!target || seenIds.has(target.id) || isHiddenFromLibrary(file)) continue;
+    seenIds.add(target.id);
+    books.push(toBookEntry(file, target, source));
+  }
   return books;
 }
 
@@ -769,25 +766,32 @@ export async function getAudiobooks(accessToken: string): Promise<AudiobookEntry
   return audiobooks;
 }
 
-type DriveClient = drive_v3.Drive;
-type DriveFile = drive_v3.Schema$File;
+interface ListChildrenOptions {
+  /** Extra Drive query clause, ANDed with the parent/trashed filter. */
+  where?: string;
+  pageSize?: number;
+  /** Include shared-drive items (default true). */
+  allDrives?: boolean;
+}
 
 /** Lists every non-trashed child of a folder, following all result pages. */
 async function listAllChildren(
   drive: DriveClient,
   folderId: string,
-  fileFields: string
+  fileFields: string,
+  { where, pageSize = 200, allDrives = true }: ListChildrenOptions = {}
 ): Promise<DriveFile[]> {
+  const baseQuery = `'${folderId}' in parents and trashed = false`;
+  const q = where ? `${baseQuery} and (${where})` : baseQuery;
   const files: DriveFile[] = [];
   let pageToken: string | null | undefined;
   do {
     const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false`,
+      q,
       fields: `nextPageToken, files(${fileFields})`,
-      pageSize: 200,
+      pageSize,
       pageToken: pageToken ?? undefined,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
+      ...(allDrives ? { supportsAllDrives: true, includeItemsFromAllDrives: true } : {}),
     });
     files.push(...(response.data.files || []));
     pageToken = response.data.nextPageToken;
@@ -1419,58 +1423,23 @@ export async function listFilesInFolderRecursive(
   folderId: string,
   source: LibrarySource = 'Unsorted'
 ): Promise<BookEntry[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  // Unlike listFilesInFolder, this does not follow shortcuts or search shared drives.
+  const files = await listAllChildren(drive, folderId, BOOK_FILE_FIELDS, {
+    where: `${SUPPORTED_MIME_QUERY} or mimeType = '${FOLDER_MIME}'`,
+    pageSize: 100,
+    allDrives: false,
+  });
 
   const books: BookEntry[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (${SUPPORTED_MIME_QUERY} or mimeType = 'application/vnd.google-apps.folder')`,
-      fields:
-        'nextPageToken, files(id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties)',
-      pageSize: 100,
-      pageToken: pageToken ?? undefined,
-    });
-
-    const files = response.data.files || [];
-    for (const file of files) {
-      // If it's a folder, recursively list files within it
-      if (file.mimeType === 'application/vnd.google-apps.folder') {
-        const nestedBooks = await listFilesInFolderRecursive(accessToken, file.id!, source);
-        books.push(...nestedBooks);
-        continue;
-      }
-
-      const format = getMimeTypeFormat(file.mimeType!);
-      if (!format) continue; // Skip unsupported formats
-
-      // Skip books the user has removed from the library (hidden, file left in Drive)
-      if ((file.appProperties as Record<string, string> | undefined)?.m_hidden === '1') continue;
-
-      const appProps = parseAppProperties(
-        file.appProperties as Record<string, string> | undefined
-      );
-
-      books.push({
-        id: file.id!,
-        name: file.name!,
-        mimeType: file.mimeType!,
-        size: file.size ? parseInt(file.size as string, 10) : 0,
-        modifiedTime: file.modifiedTime!,
-        thumbnailLink: file.thumbnailLink ?? undefined,
-        source,
-        format,
-        readingProgress: appProps.readingProgress,
-        lastLocation: appProps.lastLocation,
-        lastOpened: appProps.lastOpened,
-        ...appProps.metadata,
-      });
+  for (const file of files) {
+    if (file.mimeType === FOLDER_MIME) {
+      books.push(...(await listFilesInFolderRecursive(accessToken, file.id!, source)));
+      continue;
     }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
+    const format = getMimeTypeFormat(file.mimeType!);
+    if (!format || isHiddenFromLibrary(file)) continue;
+    books.push(toBookEntry(file, { id: file.id!, mimeType: file.mimeType!, format }, source));
+  }
   return books;
 }
