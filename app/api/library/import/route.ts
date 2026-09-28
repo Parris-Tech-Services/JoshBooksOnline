@@ -11,9 +11,184 @@ import {
   importAudioFolderToAudiobooks,
 } from '@/lib/googleDrive';
 import { clearLibraryCache } from '@/lib/libraryCache';
+import {
+  parseDriveImportRequest,
+  type DriveImportItem,
+  type ImportTarget,
+} from '@/lib/driveImportRequest';
 import type { BookEntry } from '@/types/books';
 
-export type ImportTarget = 'auto' | 'ebooks' | 'audiobooks';
+export type { ImportTarget } from '@/lib/driveImportRequest';
+
+type ImportError = { itemName: string; reason: string };
+
+type ImportAccumulator = {
+  importedFiles: BookEntry[];
+  errors: ImportError[];
+  importedAudiobookCount: number;
+};
+
+function addError(result: ImportAccumulator, itemName: string, reason: string): void {
+  result.errors.push({ itemName, reason });
+}
+
+function importModes(target: ImportTarget): {
+  ebooks: boolean;
+  audiobooks: boolean;
+} {
+  return {
+    ebooks: target === 'auto' || target === 'ebooks',
+    audiobooks: target === 'auto' || target === 'audiobooks',
+  };
+}
+
+async function importFolderEbooks(
+  accessToken: string,
+  item: DriveImportItem,
+  result: ImportAccumulator,
+): Promise<void> {
+  const folderFiles = await listFilesInFolderRecursive(
+    accessToken,
+    item.id,
+    'Unsorted',
+  );
+
+  for (const book of folderFiles) {
+    await addFileToUnsorted(accessToken, book.id);
+  }
+  result.importedFiles.push(...folderFiles);
+}
+
+async function importFolderAudiobooks(
+  accessToken: string,
+  item: DriveImportItem,
+  result: ImportAccumulator,
+  shouldReportEmpty: boolean,
+): Promise<void> {
+  const audioResult = await importAudioFolderToAudiobooks(accessToken, item.id);
+  result.importedAudiobookCount += audioResult.importedCount;
+
+  if (audioResult.importedCount === 0 && audioResult.reason && shouldReportEmpty) {
+    addError(result, item.name, audioResult.reason);
+  }
+}
+
+async function importFolder(
+  accessToken: string,
+  item: DriveImportItem,
+  target: ImportTarget,
+  result: ImportAccumulator,
+): Promise<void> {
+  const modes = importModes(target);
+  if (modes.ebooks) {
+    await importFolderEbooks(accessToken, item, result);
+  }
+  if (modes.audiobooks) {
+    await importFolderAudiobooks(
+      accessToken,
+      item,
+      result,
+      target === 'audiobooks' || !modes.ebooks,
+    );
+  }
+}
+
+async function importAudioFile(
+  accessToken: string,
+  item: DriveImportItem,
+  result: ImportAccumulator,
+): Promise<void> {
+  const audioResult = await importAudioFileToAudiobooks(accessToken, item.id);
+  if (!audioResult.ok) {
+    addError(
+      result,
+      item.name,
+      audioResult.reason ?? 'Audiobook import failed',
+    );
+    return;
+  }
+  result.importedAudiobookCount += 1;
+}
+
+async function importEbookFile(
+  accessToken: string,
+  item: DriveImportItem,
+  metadata: NonNullable<Awaited<ReturnType<typeof getFileMetadata>>>,
+  format: NonNullable<ReturnType<typeof getMimeTypeFormat>>,
+  result: ImportAccumulator,
+): Promise<void> {
+  const linked = await addFileToUnsorted(accessToken, metadata.id);
+  if (!linked) {
+    addError(result, item.name, 'Could not add file to Unsorted folder');
+    return;
+  }
+
+  result.importedFiles.push({
+    id: metadata.id,
+    name: item.name,
+    mimeType: metadata.mimeType,
+    size: metadata.size,
+    modifiedTime: metadata.modifiedTime,
+    source: 'Unsorted',
+    format,
+    readingProgress: 0,
+    lastLocation: '',
+  });
+}
+
+function unsupportedReason(isAudio: boolean, mimeType: string): string {
+  if (isAudio) return 'Audio import is only available from the Audiobooks tab';
+  return `Unsupported file format: ${mimeType}. Supported: PDF, EPUB, TXT, DOCX, MP3, M4A, M4B, and other audio types.`;
+}
+
+async function importFile(
+  accessToken: string,
+  item: DriveImportItem,
+  target: ImportTarget,
+  result: ImportAccumulator,
+): Promise<void> {
+  const metadata = await getFileMetadata(accessToken, item.id);
+  if (!metadata) {
+    addError(result, item.name, 'Could not retrieve file metadata');
+    return;
+  }
+
+  const modes = importModes(target);
+  const ebookFormat = getMimeTypeFormat(metadata.mimeType);
+  const audio = isAudioMimeType(metadata.mimeType, metadata.name);
+
+  if (audio && modes.audiobooks) {
+    await importAudioFile(accessToken, item, result);
+    return;
+  }
+  if (ebookFormat && modes.ebooks) {
+    await importEbookFile(accessToken, item, metadata, ebookFormat, result);
+    return;
+  }
+
+  addError(result, item.name, unsupportedReason(audio, metadata.mimeType));
+}
+
+async function importItem(
+  accessToken: string,
+  item: DriveImportItem,
+  target: ImportTarget,
+  result: ImportAccumulator,
+): Promise<void> {
+  try {
+    if (item.type === 'folder') {
+      await importFolder(accessToken, item, target, result);
+      return;
+    }
+    await importFile(accessToken, item, target, result);
+  } catch (error) {
+    addError(
+      result,
+      item.name,
+      error instanceof Error ? error.message : 'Unknown error',
+    );
+  }
+}
 
 /**
  * POST /api/library/import
@@ -23,150 +198,46 @@ export type ImportTarget = 'auto' | 'ebooks' | 'audiobooks';
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-
     if (!session?.accessToken) {
       return NextResponse.json(
         { error: 'Unauthorized: No access token available' },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
-    const body = await request.json();
-    const { items, target = 'auto' } = body as {
-      items: Array<{
-        id: string;
-        name: string;
-        mimeType: string;
-        type: 'file' | 'folder';
-      }>;
-      target?: ImportTarget;
+    const parsed = parseDriveImportRequest(await request.json());
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+
+    const result: ImportAccumulator = {
+      importedFiles: [],
+      errors: [],
+      importedAudiobookCount: 0,
     };
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid request: items array is required and must not be empty' },
-        { status: 400 }
-      );
+    for (const item of parsed.items) {
+      await importItem(session.accessToken, item, parsed.target, result);
     }
 
-    const importEbooks = target === 'auto' || target === 'ebooks';
-    const importAudiobooks = target === 'auto' || target === 'audiobooks';
-
-    const importedFiles: BookEntry[] = [];
-    const errors: Array<{ itemName: string; reason: string }> = [];
-    let importedAudiobookCount = 0;
-
-    for (const item of items) {
-      try {
-        if (item.type === 'folder') {
-          if (importEbooks) {
-            const folderFiles = await listFilesInFolderRecursive(
-              session.accessToken,
-              item.id,
-              'Unsorted'
-            );
-            for (const book of folderFiles) {
-              await addFileToUnsorted(session.accessToken, book.id);
-            }
-            importedFiles.push(...folderFiles);
-          }
-
-          if (importAudiobooks) {
-            const audioResult = await importAudioFolderToAudiobooks(session.accessToken, item.id);
-            importedAudiobookCount += audioResult.importedCount;
-            if (audioResult.importedCount === 0 && audioResult.reason) {
-              if (target === 'audiobooks' || !importEbooks) {
-                errors.push({ itemName: item.name, reason: audioResult.reason });
-              }
-            }
-          }
-        } else if (item.type === 'file') {
-          const metadata = await getFileMetadata(session.accessToken, item.id);
-
-          if (!metadata) {
-            errors.push({
-              itemName: item.name,
-              reason: 'Could not retrieve file metadata',
-            });
-            continue;
-          }
-
-          const ebookFormat = getMimeTypeFormat(metadata.mimeType);
-          const isAudio = isAudioMimeType(metadata.mimeType, metadata.name);
-
-          if (isAudio && importAudiobooks) {
-            const audioResult = await importAudioFileToAudiobooks(session.accessToken, item.id);
-            if (audioResult.ok) {
-              importedAudiobookCount += 1;
-            } else {
-              errors.push({
-                itemName: item.name,
-                reason: audioResult.reason ?? 'Audiobook import failed',
-              });
-            }
-            continue;
-          }
-
-          if (ebookFormat && importEbooks) {
-            const bookEntry: BookEntry = {
-              id: metadata.id,
-              name: item.name,
-              mimeType: metadata.mimeType,
-              size: metadata.size,
-              modifiedTime: metadata.modifiedTime,
-              source: 'Unsorted',
-              format: ebookFormat,
-              readingProgress: 0,
-              lastLocation: '',
-            };
-
-            const linked = await addFileToUnsorted(session.accessToken, metadata.id);
-            if (!linked) {
-              errors.push({
-                itemName: item.name,
-                reason: 'Could not add file to Unsorted folder',
-              });
-              continue;
-            }
-
-            importedFiles.push(bookEntry);
-            continue;
-          }
-
-          const unsupportedReason = isAudio
-            ? 'Audio import is only available from the Audiobooks tab'
-            : `Unsupported file format: ${metadata.mimeType}. Supported: PDF, EPUB, TXT, DOCX, MP3, M4A, M4B, and other audio types.`;
-
-          errors.push({
-            itemName: item.name,
-            reason: unsupportedReason,
-          });
-        }
-      } catch (itemError) {
-        const errorMessage = itemError instanceof Error ? itemError.message : 'Unknown error';
-        errors.push({
-          itemName: item.name,
-          reason: errorMessage,
-        });
-      }
-    }
-
-    await clearLibraryCache(session.accessToken, session.user?.email ?? undefined);
-
-    const importedCount = importedFiles.length;
+    await clearLibraryCache(
+      session.accessToken,
+      session.user?.email ?? undefined,
+    );
 
     return NextResponse.json({
-      importedCount,
-      importedAudiobookCount,
-      files: importedFiles,
-      errors,
+      importedCount: result.importedFiles.length,
+      importedAudiobookCount: result.importedAudiobookCount,
+      files: result.importedFiles,
+      errors: result.errors,
     });
   } catch (error) {
     console.error('[/api/library/import] Error:', error);
-    const message = error instanceof Error ? error.message : 'Internal server error';
+    const message =
+      error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json(
       { error: `Import failed: ${message}` },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
