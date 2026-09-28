@@ -769,107 +769,121 @@ export async function getAudiobooks(accessToken: string): Promise<AudiobookEntry
   return audiobooks;
 }
 
-/**
- * Recursively gather the audio tracks for one audiobook. For a folder id this
- * walks all nested folders (e.g. per-disc subfolders); for a single audio file
- * it returns just that file.
- */
-export async function getAudiobookTracks(
-  accessToken: string,
-  id: string,
-  isFolder: boolean
+type DriveClient = ReturnType<typeof google.drive>;
+
+type DriveAudioFile = {
+  id?: string | null;
+  name?: string | null;
+  size?: string | number | null;
+  parents?: string[] | null;
+  mimeType?: string | null;
+  appProperties?: Record<string, string> | null;
+  shortcutDetails?: {
+    targetId?: string | null;
+    targetMimeType?: string | null;
+  } | null;
+};
+
+function streamFileId(file: DriveAudioFile): string {
+  if (file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId) {
+    return file.shortcutDetails.targetId;
+  }
+  if (!file.id) throw new Error('Drive audio entry is missing an id');
+  return file.id;
+}
+
+function toAudioTrack(file: DriveAudioFile): AudioTrack {
+  if (!file.name) throw new Error('Drive audio entry is missing a name');
+  return {
+    id: streamFileId(file),
+    name: file.name,
+    size: file.size ? parseInt(String(file.size), 10) : 0,
+  };
+}
+
+async function listSiblingAudioTracks(
+  drive: DriveClient,
+  parent: string,
+  key: string,
 ): Promise<AudioTrack[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const siblings: AudioTrack[] = [];
+  let pageToken: string | null | undefined;
 
-  if (!isFolder) {
-    // A loose-file audiobook is represented by its first chapter. Gather all of
-    // its sibling chapters (same parent folder + same derived book key) as tracks.
-    const file = await drive.files.get({
-      fileId: id,
-      fields: 'id, name, size, parents, appProperties, mimeType, shortcutDetails',
+  do {
+    const response = await drive.files.list({
+      q: `'${parent}' in parents and trashed = false`,
+      fields:
+        'nextPageToken, files(id, name, mimeType, size, appProperties, shortcutDetails)',
+      pageSize: 200,
+      pageToken: pageToken ?? undefined,
       supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
-    const parent = file.data.parents?.[0];
-    const props = file.data.appProperties as Record<string, string> | undefined;
-    const key = manualAudioGroupKey(props) || deriveBookKey(file.data.name!);
-    const streamId =
-      file.data.mimeType === SHORTCUT_MIME && file.data.shortcutDetails?.targetId
-        ? file.data.shortcutDetails.targetId
-        : file.data.id!;
 
-    if (!parent) {
-      return [
-        {
-          id: streamId,
-          name: file.data.name!,
-          size: file.data.size ? parseInt(file.data.size as string, 10) : 0,
-        },
-      ];
+    for (const file of response.data.files || []) {
+      const kind = classifyAudiobookChildMime(
+        file.mimeType,
+        file.shortcutDetails?.targetMimeType,
+      );
+      if (kind !== 'audio' || !file.name) continue;
+
+      const props = file.appProperties as Record<string, string> | undefined;
+      const siblingKey = manualAudioGroupKey(props) || deriveBookKey(file.name);
+      if (siblingKey === key) siblings.push(toAudioTrack(file));
     }
 
-    const siblings: AudioTrack[] = [];
-    let pageToken: string | null | undefined;
-    do {
-      const response = await drive.files.list({
-        q: `'${parent}' in parents and trashed = false`,
-        fields:
-          'nextPageToken, files(id, name, mimeType, size, appProperties, shortcutDetails)',
-        pageSize: 200,
-        pageToken: pageToken ?? undefined,
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true,
-      });
-      for (const f of response.data.files || []) {
-        const kind = classifyAudiobookChildMime(
-          f.mimeType,
-          f.shortcutDetails?.targetMimeType
-        );
-        if (kind !== 'audio') continue;
-        const siblingProps = f.appProperties as Record<string, string> | undefined;
-        const siblingKey = manualAudioGroupKey(siblingProps) || deriveBookKey(f.name!);
-        if (siblingKey !== key) continue;
-        const siblingStreamId =
-          f.mimeType === SHORTCUT_MIME && f.shortcutDetails?.targetId
-            ? f.shortcutDetails.targetId
-            : f.id!;
-        siblings.push({
-          id: siblingStreamId,
-          name: f.name!,
-          size: f.size ? parseInt(f.size as string, 10) : 0,
-        });
-      }
-      pageToken = response.data.nextPageToken;
-    } while (pageToken);
+    pageToken = response.data.nextPageToken;
+  } while (pageToken);
 
-    siblings.sort((a, b) => naturalCompare(a.name, b.name));
-    return siblings.length > 0
-      ? siblings
-      : [
-          {
-            id: streamId,
-            name: file.data.name!,
-            size: file.data.size ? parseInt(file.data.size as string, 10) : 0,
-          },
-        ];
-  }
+  siblings.sort((a, b) => naturalCompare(a.name, b.name));
+  return siblings;
+}
 
-  let folderId = id;
-  const folderEntry = await drive.files.get({
+async function getLooseAudiobookTracks(
+  drive: DriveClient,
+  id: string,
+): Promise<AudioTrack[]> {
+  const response = await drive.files.get({
+    fileId: id,
+    fields: 'id, name, size, parents, appProperties, mimeType, shortcutDetails',
+    supportsAllDrives: true,
+  });
+  const file = response.data;
+  if (!file.name) throw new Error('Drive audio entry is missing a name');
+
+  const fallback = toAudioTrack(file);
+  const parent = file.parents?.[0];
+  if (!parent) return [fallback];
+
+  const props = file.appProperties as Record<string, string> | undefined;
+  const key = manualAudioGroupKey(props) || deriveBookKey(file.name);
+  const siblings = await listSiblingAudioTracks(drive, parent, key);
+  return siblings.length > 0 ? siblings : [fallback];
+}
+
+async function resolveFolderTargetId(
+  drive: DriveClient,
+  id: string,
+): Promise<string> {
+  const response = await drive.files.get({
     fileId: id,
     fields: 'mimeType, shortcutDetails',
     supportsAllDrives: true,
   });
-  if (
-    folderEntry.data.mimeType === SHORTCUT_MIME &&
-    folderEntry.data.shortcutDetails?.targetId
-  ) {
-    folderId = folderEntry.data.shortcutDetails.targetId;
-  }
+  const file = response.data;
+  return file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId
+    ? file.shortcutDetails.targetId
+    : id;
+}
 
+async function listFolderChildren(
+  drive: DriveClient,
+  folderId: string,
+): Promise<{ tracks: AudioTrack[]; subFolders: { id: string; name: string }[] }> {
   const tracks: AudioTrack[] = [];
   const subFolders: { id: string; name: string }[] = [];
   let pageToken: string | null | undefined;
+
   do {
     const response = await drive.files.list({
       q: `'${folderId}' in parents and trashed = false`,
@@ -879,43 +893,57 @@ export async function getAudiobookTracks(
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
     });
+
     for (const file of response.data.files || []) {
       const kind = classifyAudiobookChildMime(
         file.mimeType,
-        file.shortcutDetails?.targetMimeType
+        file.shortcutDetails?.targetMimeType,
       );
-      if (kind === 'folder') {
-        const nestedFolderId =
-          file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId
-            ? file.shortcutDetails.targetId
-            : file.id!;
-        subFolders.push({ id: nestedFolderId, name: file.name! });
-      } else if (kind === 'audio') {
-        const streamId =
-          file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId
-            ? file.shortcutDetails.targetId
-            : file.id!;
-        tracks.push({
-          id: streamId,
-          name: file.name!,
-          size: file.size ? parseInt(file.size as string, 10) : 0,
-        });
+      if (kind === 'audio') {
+        tracks.push(toAudioTrack(file));
+      } else if (kind === 'folder' && file.name) {
+        subFolders.push({ id: streamFileId(file), name: file.name });
       }
     }
+
     pageToken = response.data.nextPageToken;
   } while (pageToken);
 
-  // Recurse into sub-folders (per-disc), ordered naturally
+  return { tracks, subFolders };
+}
+
+async function collectFolderAudiobookTracks(
+  drive: DriveClient,
+  folderId: string,
+): Promise<AudioTrack[]> {
+  const { tracks, subFolders } = await listFolderChildren(drive, folderId);
   subFolders.sort((a, b) => naturalCompare(a.name, b.name));
-  for (const sub of subFolders) {
-    const nested = await getAudiobookTracks(accessToken, sub.id, true);
-    tracks.push(...nested);
+
+  for (const subFolder of subFolders) {
+    tracks.push(...(await collectFolderAudiobookTracks(drive, subFolder.id)));
   }
 
-  // Files directly in this folder, ordered naturally, come before nested ones
-  // only matters when both exist; keep a stable natural order overall.
   tracks.sort((a, b) => naturalCompare(a.name, b.name));
   return tracks;
+}
+
+/**
+ * Recursively gather the audio tracks for one audiobook. For a folder id this
+ * walks all nested folders (e.g. per-disc subfolders); for a single audio file
+ * it returns that file plus matching sibling chapters.
+ */
+export async function getAudiobookTracks(
+  accessToken: string,
+  id: string,
+  isFolder: boolean,
+): Promise<AudioTrack[]> {
+  const auth = getOAuthClient(accessToken);
+  const drive = google.drive({ version: 'v3', auth });
+
+  if (!isFolder) return getLooseAudiobookTracks(drive, id);
+
+  const folderId = await resolveFolderTargetId(drive, id);
+  return collectFolderAudiobookTracks(drive, folderId);
 }
 
 /** Fetch one audiobook's title + metadata + resume position by id. */
