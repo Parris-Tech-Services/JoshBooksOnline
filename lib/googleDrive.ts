@@ -548,73 +548,51 @@ export async function findLocalBooksFolderId(accessToken: string): Promise<strin
 }
 
 /**
- * Get all library files from all sources (three fixed folders + Local Books if found)
- * Deduplicates by file ID
+ * Lists one library source, logging and returning nothing if it fails so the
+ * rest of the library still loads.
+ */
+async function listSourceSafely(label: string, list: () => Promise<BookEntry[]>): Promise<BookEntry[]> {
+  try {
+    return await list();
+  } catch (error) {
+    console.error(`Failed to fetch from ${label}:`, error);
+    return [];
+  }
+}
+
+async function listLocalBooks(accessToken: string): Promise<BookEntry[]> {
+  const localBooksId = await findLocalBooksFolderId(accessToken);
+  return localBooksId ? listFilesInFolder(accessToken, localBooksId, 'Local Books') : [];
+}
+
+/**
+ * Get all library files from every source: the fixed folders, the permanent
+ * ebook collections (recursively) and Local Books if it exists. A book found
+ * in several sources is listed once, from the first source listed here.
  */
 export async function getAllLibraryFiles(accessToken: string): Promise<BookEntry[]> {
-  const allBooks: BookEntry[] = [];
+  const fixed = Promise.all(
+    Object.entries(FIXED_FOLDERS).map(([source, folderId]) =>
+      listSourceSafely(source, () =>
+        listFilesInFolder(accessToken, folderId, source as Exclude<LibrarySource, 'Local Books'>)
+      )
+    )
+  );
+  const collections = Promise.all(
+    Object.entries(EBOOK_FOLDERS).map(([source, folderId]) =>
+      listSourceSafely(source, () => listFilesInFolderRecursive(accessToken, folderId, source as LibrarySource))
+    )
+  );
+  const local = listSourceSafely('Local Books', () => listLocalBooks(accessToken));
+
   const seenIds = new Set<string>();
-
-  // Fetch from the three fixed folders in parallel.
-  const fixedFolderResults = await Promise.all(
-    Object.entries(FIXED_FOLDERS).map(async ([source, folderId]) => {
-      try {
-        const books = await listFilesInFolder(
-          accessToken,
-          folderId,
-          source as Exclude<LibrarySource, 'Local Books'>
-        );
-        return { source, books };
-      } catch (error) {
-        console.error(`Failed to fetch from ${source}:`, error);
-        return { source, books: [] as BookEntry[] };
-      }
-    })
-  );
-
-  for (const { books } of fixedFolderResults) {
-    for (const book of books) {
-      if (!seenIds.has(book.id)) {
-        allBooks.push(book);
-        seenIds.add(book.id);
-      }
-    }
+  const books: BookEntry[] = [];
+  for (const book of [...(await fixed), ...(await collections), await local].flat()) {
+    if (seenIds.has(book.id)) continue;
+    seenIds.add(book.id);
+    books.push(book);
   }
-
-  // Fetch recursively from the permanent ebook collection folders
-  await Promise.all(
-    Object.entries(EBOOK_FOLDERS).map(async ([source, folderId]) => {
-      try {
-        const books = await listFilesInFolderRecursive(accessToken, folderId, source as LibrarySource);
-        for (const book of books) {
-          if (!seenIds.has(book.id)) {
-            allBooks.push(book);
-            seenIds.add(book.id);
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to fetch from ${source}:`, error);
-      }
-    })
-  );
-
-  // Try to fetch from Local Books if it exists
-  try {
-    const localBooksId = await findLocalBooksFolderId(accessToken);
-    if (localBooksId) {
-      const books = await listFilesInFolder(accessToken, localBooksId, 'Local Books');
-      for (const book of books) {
-        if (!seenIds.has(book.id)) {
-          allBooks.push(book);
-          seenIds.add(book.id);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Failed to fetch from Local Books:', error);
-  }
-
-  return allBooks;
+  return books;
 }
 
 /** Parse audiobook metadata + resume position from a folder/file's appProperties. */
