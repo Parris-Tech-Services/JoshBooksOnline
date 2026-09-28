@@ -1626,24 +1626,18 @@ export default function LibraryPage() {
   const importUserdataRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleImportUserdata = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportUserdata = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        restoreUserdataBackup(window.localStorage, String(reader.result ?? ''));
-        window.location.reload();
-      } catch {
-        alert('Failed to import — the file may be invalid or corrupted.');
-      }
-    };
-    reader.onerror = () => {
-      alert('Failed to read the backup file.');
-    };
-    reader.readAsText(file);
+    try {
+      const raw = await file.text();
+      restoreUserdataBackup(window.localStorage, raw);
+      window.location.reload();
+    } catch {
+      alert('Failed to import — the file may be invalid or corrupted.');
+    }
   };
 
   return (
