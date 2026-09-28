@@ -1,3 +1,7 @@
+Engineering principles: v5.1
+Assurance tier: 3
+Canonical repository: https://github.com/Parris-Tech-Services/JoshBooksOnline
+
 # JoshBooks — Personal Media Library
 
 A single-user library for reading ebooks, listening to Drive and YouTube audiobooks, and browsing movies. JoshBooks combines Google Drive media with local catalogue data, metadata editing, progress tracking, folders, search, and backup tools.
