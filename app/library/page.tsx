@@ -474,6 +474,23 @@ function newManualGroupId(): string {
   }
 }
 
+function downloadUserdataBackup(): void {
+  const data = createUserdataBackup(window.localStorage);
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: 'application/json',
+  });
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `joshbooks-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 export default function LibraryPage() {
   const [books, setBooks] = useState<BookEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1608,21 +1625,6 @@ export default function LibraryPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const exportUserdata = () => {
-    try {
-      const data = createUserdataBackup(window.localStorage);
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `joshbooks-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      alert('Failed to export your library settings.');
-    }
-  };
-
   const importUserdataRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1695,7 +1697,7 @@ export default function LibraryPage() {
               </button>
               <button
                 type="button"
-                onClick={exportUserdata}
+                onClick={downloadUserdataBackup}
                 title="Download a backup of all your settings, progress, and metadata"
                 className="inline-flex items-center justify-center rounded-full bg-slate-800 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
               >
