@@ -2,19 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { getBaseYoutubeCatalog } from '@/lib/youtubeCatalog';
+import {
+  buildYtSuggestions,
+  normaliseSuggestionText as normalise,
+  type YtSuggestion,
+} from '@/lib/librarySuggestions';
 import { useYoutubeCatalog } from '@/lib/useYoutubeCatalog';
 import type { BookEntry, AudiobookEntry, Audiobook } from '@/types/books';
 
 // ── Types ──────────────────────────────────────────────────────────────────
-
-interface YtSuggestion {
-  kind: 'youtube';
-  audiobook: Audiobook;
-  score: number;
-  reason: string;
-  matchedBookTitle?: string;
-}
 
 interface DriveSuggestion {
   kind: 'drive';
@@ -24,103 +20,6 @@ interface DriveSuggestion {
 }
 
 // ── Algorithm ──────────────────────────────────────────────────────────────
-
-function normalise(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-}
-
-function wordsOf(s: string) {
-  return normalise(s).split(/\s+/).filter((w) => w.length > 3);
-}
-
-function overlap(a: string[], b: string[]) {
-  const setB = new Set(b);
-  return a.filter((w) => setB.has(w)).length;
-}
-
-function buildYtSuggestions(
-  books: BookEntry[],
-  driveAudiobooks: AudiobookEntry[],
-  ytCatalog: Audiobook[],
-  removedIds: string[],
-): YtSuggestion[] {
-  // IDs the user already has or explicitly removed from their YouTube catalog
-  const existingIds = new Set(ytCatalog.map((a) => a.id));
-  const removedSet = new Set(removedIds);
-  const baseCatalog = getBaseYoutubeCatalog().filter((yt) => !existingIds.has(yt.id) && !removedSet.has(yt.id));
-
-  const ebookAuthors: string[] = [];
-  const ebookTitles: string[] = [];
-
-  for (const b of books) {
-    const title = b.title ?? b.name.replace(/\.[^.]+$/, '');
-    ebookTitles.push(normalise(title));
-    for (const a of b.authors ?? []) ebookAuthors.push(normalise(a));
-  }
-  for (const a of driveAudiobooks) {
-    for (const auth of a.authors ?? []) ebookAuthors.push(normalise(auth));
-  }
-
-  const seen = new Set<string>();
-  const suggestions: YtSuggestion[] = [];
-
-  for (const yt of baseCatalog) {
-    if (seen.has(yt.id)) continue;
-
-    let score = 0;
-    let reason = '';
-    let matchedBookTitle: string | undefined;
-
-    const ytWords = wordsOf(yt.title);
-    const ytAuthorWords = wordsOf(yt.author);
-
-    // Title match via catalogueMatches
-    for (const cm of yt.catalogueMatches) {
-      const cmNorm = normalise(cm);
-      for (let i = 0; i < books.length; i++) {
-        const title = normalise(books[i].title ?? books[i].name.replace(/\.[^.]+$/, ''));
-        if (cmNorm === title || title.includes(cmNorm) || cmNorm.includes(title.split(' ')[0])) {
-          score = Math.max(score, 20);
-          matchedBookTitle = books[i].title ?? books[i].name;
-          reason = `Matches your ebook "${matchedBookTitle}"`;
-          break;
-        }
-      }
-      if (score >= 20) break;
-    }
-
-    // Title word overlap
-    if (score < 20) {
-      for (const ebTitle of ebookTitles) {
-        const ebWords = wordsOf(ebTitle);
-        const ov = overlap(ytWords, ebWords);
-        if (ov >= 2 && score < 15) {
-          score = Math.max(score, 12);
-          reason = reason || `Title keywords match your library`;
-        }
-      }
-    }
-
-    // Author match
-    if (score < 15) {
-      for (const ebAuthor of ebookAuthors) {
-        const ebAuthWords = wordsOf(ebAuthor);
-        const ov = overlap(ytAuthorWords, ebAuthWords);
-        if (ov >= 1 && ebAuthWords.length > 0) {
-          score = Math.max(score, 8);
-          reason = reason || `By ${yt.author} — author in your library`;
-        }
-      }
-    }
-
-    if (score >= 8) {
-      seen.add(yt.id);
-      suggestions.push({ kind: 'youtube', audiobook: yt, score, reason, matchedBookTitle });
-    }
-  }
-
-  return suggestions.sort((a, b) => b.score - a.score).slice(0, 60);
-}
 
 function buildDriveSuggestions(books: BookEntry[]): DriveSuggestion[] {
   const suggestions: DriveSuggestion[] = [];
