@@ -26,6 +26,7 @@ import {
   type AutoGroupSuggestion,
   type ManualAudiobookGroup,
 } from '@/lib/audiobookGroups';
+import { useLibraryKeyboardShortcuts } from '@/lib/useLibraryKeyboardShortcuts';
 import CollectionsManager from '@/components/CollectionsManager';
 import type { BookEntry, BookMetadata, AudiobookEntry, Audiobook, LibrarySource, MovieEntry } from '@/types/books';
 
@@ -1603,30 +1604,9 @@ export default function LibraryPage() {
   }, [books, audiobooks, movieProgress, hiddenIds]);
 
 
-  // Press "/" to focus search; Escape to clear; 1/2/3 to switch tabs
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-      if (e.key === '/') {
-        if (inInput) return;
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      } else if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
-        setSearch('');
-        searchInputRef.current?.blur();
-      } else if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (e.key === '1') setTab('ebooks');
-        else if (e.key === '2') setTab('audiobooks');
-        else if (e.key === '3') setTab('movies');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
   const importUserdataRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useLibraryKeyboardShortcuts(searchInputRef, setSearch, setTab);
 
   const handleImportUserdata = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
