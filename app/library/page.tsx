@@ -20,6 +20,12 @@ import {
   createUserdataBackup,
   restoreUserdataBackup,
 } from '@/lib/userdataBackup';
+import {
+  applyAutoGroupSuggestions,
+  buildAutoGroupSuggestions,
+  type AutoGroupSuggestion,
+  type ManualAudiobookGroup,
+} from '@/lib/audiobookGroups';
 import CollectionsManager from '@/components/CollectionsManager';
 import type { BookEntry, BookMetadata, AudiobookEntry, Audiobook, LibrarySource, MovieEntry } from '@/types/books';
 
@@ -468,20 +474,6 @@ function newManualGroupId(): string {
   }
 }
 
-function extractBaseTitle(title: string): string {
-  const base = title
-    // "Lilith Chapter 1: The Library" → "Lilith"
-    .replace(/\s+(chapter|part|book|vol\.?|volume|episode|ep\.?)\s*\d[\s\S]*$/i, '')
-    // "THE PRINCESS AND THE GOBLIN 1 Why the Princess..." → "THE PRINCESS AND THE GOBLIN"
-    .replace(/\s+\d+[\s:–—\-][\s\S]*$/, '')
-    // "45. Romans ROM1", "transition8h", trailing alpha-numeric codes → strip last token if it contains a digit
-    .replace(/\s+\w*\d+\w*$/, '')
-    // "The Great Divorce... by CS Lewis a 1" → strip trailing single-letter suffix after number stripped
-    .replace(/\s+[a-z]$/i, '')
-    .trim();
-  return base || title;
-}
-
 export default function LibraryPage() {
   const [books, setBooks] = useState<BookEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -542,12 +534,11 @@ export default function LibraryPage() {
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeName, setMergeName] = useState('');
   const [mergeProgress, setMergeProgress] = useState<{ done: number; total: number; label: string } | null>(null);
-  type AutoGroupSuggestion = { id: string; name: string; memberIds: string[]; members: AudiobookEntry[]; included: boolean };
   const [autoGroupDialogOpen, setAutoGroupDialogOpen] = useState(false);
   const [autoGroupSuggestions, setAutoGroupSuggestions] = useState<AutoGroupSuggestion[]>([]);
   // Manual audiobook playlists — entry-level, stored in the per-user server store
   // (and localStorage), so merging works regardless of Drive write permissions.
-  const [manualGroups, setManualGroups] = useState<{ id: string; title: string; memberIds: string[] }[]>([]);
+  const [manualGroups, setManualGroups] = useState<ManualAudiobookGroup[]>([]);
   // ebookId -> audiobookId links (localStorage authoritative, best-effort Drive sync)
   const [links, setLinks] = useState<Record<string, string>>({});
   const [linkingBook, setLinkingBook] = useState<BookEntry | null>(null);
@@ -1283,29 +1274,9 @@ export default function LibraryPage() {
   };
 
   const openAutoGroupDialog = () => {
-    const alreadyMergedIds = new Set(manualGroups.flatMap((g) => g.memberIds));
-    const eligible = (audiobooks ?? []).filter(
-      (b) => !b.isFolder && !isManualGroupEntryId(b.id) && !alreadyMergedIds.has(b.id)
+    setAutoGroupSuggestions(
+      buildAutoGroupSuggestions(audiobooks ?? [], manualGroups, newManualGroupId),
     );
-
-    const groups = new Map<string, AudiobookEntry[]>();
-    for (const book of eligible) {
-      const base = extractBaseTitle(book.title);
-      if (base.length < 4) continue;
-      const existing = groups.get(base) ?? [];
-      existing.push(book);
-      groups.set(base, existing);
-    }
-
-    const suggestions: AutoGroupSuggestion[] = [];
-    for (const [name, members] of groups) {
-      if (members.length < 2) continue;
-      members.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }));
-      suggestions.push({ id: newManualGroupId(), name, memberIds: members.map((m) => m.id), members, included: true });
-    }
-    suggestions.sort((a, b) => b.members.length - a.members.length);
-
-    setAutoGroupSuggestions(suggestions);
     setAutoGroupDialogOpen(true);
   };
 
@@ -1318,23 +1289,18 @@ export default function LibraryPage() {
   };
 
   const confirmAutoGroups = () => {
-    const toMerge = autoGroupSuggestions.filter((s) => s.included && s.name.trim());
-    if (toMerge.length === 0) return;
-    setManualGroups((prev) => {
-      let next = [...prev];
-      for (const suggestion of toMerge) {
-        const memberSet = new Set(suggestion.memberIds);
-        next = next
-          .map((g) => ({ ...g, memberIds: g.memberIds.filter((id) => !memberSet.has(id)) }))
-          .filter((g) => g.memberIds.length > 0);
-        next.push({ id: suggestion.id, title: suggestion.name.trim(), memberIds: suggestion.memberIds });
-      }
-      return next;
-    });
+    const includedCount = autoGroupSuggestions.filter(
+      (suggestion) => suggestion.included && suggestion.name.trim(),
+    ).length;
+    if (includedCount === 0) return;
+
+    setManualGroups((previous) =>
+      applyAutoGroupSuggestions(previous, autoGroupSuggestions),
+    );
     setAutoGroupDialogOpen(false);
     setAudioGroupStatus({
       loading: false,
-      message: `Created ${toMerge.length} playlist${toMerge.length === 1 ? '' : 's'}.`,
+      message: `Created ${includedCount} playlist${includedCount === 1 ? '' : 's'}.`,
     });
   };
 
