@@ -1230,6 +1230,37 @@ export async function addFileToAudiobooksFolder(
   return addFileToLibraryFolder(accessToken, fileId, AUDIOBOOK_FOLDERS[source]);
 }
 
+/**
+ * Drive no longer supports multiple parents, so a file that already lives
+ * elsewhere is linked with a shortcut; if that fails, a copy is made.
+ */
+async function linkFileElsewhere(
+  drive: DriveClient,
+  file: { fileId: string; name: string; mimeType: string },
+  folderId: string
+): Promise<void> {
+  try {
+    await drive.files.create({
+      requestBody: {
+        name: file.name,
+        mimeType: SHORTCUT_MIME,
+        parents: [folderId],
+        shortcutDetails: { targetId: file.fileId, targetMimeType: file.mimeType },
+      },
+      supportsAllDrives: true,
+      fields: 'id',
+    });
+  } catch (shortcutError) {
+    console.warn(`Shortcut failed for ${file.fileId}, trying copy:`, shortcutError);
+    await drive.files.copy({
+      fileId: file.fileId,
+      requestBody: { name: file.name, parents: [folderId] },
+      supportsAllDrives: true,
+      fields: 'id',
+    });
+  }
+}
+
 async function addFileToLibraryFolder(
   accessToken: string,
   fileId: string,
@@ -1264,35 +1295,8 @@ async function addFileToLibraryFolder(
       return true;
     }
 
-    // Drive no longer supports multiple parents — link via shortcut instead.
-    try {
-      await drive.files.create({
-        requestBody: {
-          name,
-          mimeType: SHORTCUT_MIME,
-          parents: [folderId],
-          shortcutDetails: {
-            targetId: fileId,
-            targetMimeType: mimeType,
-          },
-        },
-        supportsAllDrives: true,
-        fields: 'id',
-      });
-      return true;
-    } catch (shortcutError) {
-      console.warn(`Shortcut failed for ${fileId}, trying copy:`, shortcutError);
-      await drive.files.copy({
-        fileId,
-        requestBody: {
-          name,
-          parents: [folderId],
-        },
-        supportsAllDrives: true,
-        fields: 'id',
-      });
-      return true;
-    }
+    await linkFileElsewhere(drive, { fileId, name, mimeType }, folderId);
+    return true;
   } catch (error) {
     console.error(`Failed to add file ${fileId} to folder ${folderId}:`, error);
     return false;
@@ -1365,41 +1369,49 @@ export async function importAudioFileToAudiobooks(
   return linked ? { ok: true } : { ok: false, reason: 'Could not add file to Audiobooks folder' };
 }
 
+/** Links a whole folder as one audiobook. */
+async function importFolderAsOneAudiobook(
+  accessToken: string,
+  folderId: string
+): Promise<{ importedCount: number; reason?: string }> {
+  const linked = await addFileToAudiobooksFolder(accessToken, folderId);
+  return linked ? { importedCount: 1 } : { importedCount: 0, reason: 'Could not add folder to Audiobooks' };
+}
+
+/** Links each audio-bearing book folder in a collection; returns how many linked. */
+async function importCollectionBooks(accessToken: string, bookFolderIds: string[]): Promise<number> {
+  let importedCount = 0;
+  for (const bookFolderId of bookFolderIds) {
+    if (!(await folderContainsAudioRecursive(accessToken, bookFolderId))) continue;
+    if (await addFileToAudiobooksFolder(accessToken, bookFolderId)) importedCount += 1;
+  }
+  return importedCount;
+}
+
 /**
  * Import a Drive folder into Audiobooks. Book collections (subfolders only) are
- * linked individually; single-book folders are linked as one unit.
+ * linked individually; single-book folders are linked as one unit. If no book
+ * in a collection can be linked, the collection is linked as one instead.
  */
 export async function importAudioFolderToAudiobooks(
   accessToken: string,
   folderId: string
 ): Promise<{ importedCount: number; reason?: string }> {
-  const hasAudio = await folderContainsAudioRecursive(accessToken, folderId);
-  if (!hasAudio) {
+  if (!(await folderContainsAudioRecursive(accessToken, folderId))) {
     return { importedCount: 0, reason: 'No audio files found in folder' };
   }
 
   const children = await listImmediateFolderChildren(accessToken, folderId);
-  const subfolders = children.filter((child) => folderChildTargetId(child) !== null);
-  const looseAudio = children.filter(
+  const bookFolderIds = children.map(folderChildTargetId).filter((id): id is string => id !== null);
+  const hasLooseAudio = children.some(
     (child) => classifyAudiobookChildMime(child.mimeType, child.shortcutTargetMime) === 'audio'
   );
 
-  if (subfolders.length > 0 && looseAudio.length === 0) {
-    let importedCount = 0;
-    for (const subfolder of subfolders) {
-      const subfolderId = folderChildTargetId(subfolder)!;
-      if (!(await folderContainsAudioRecursive(accessToken, subfolderId))) continue;
-      const linked = await addFileToAudiobooksFolder(accessToken, subfolderId);
-      if (linked) importedCount += 1;
-    }
+  if (bookFolderIds.length > 0 && !hasLooseAudio) {
+    const importedCount = await importCollectionBooks(accessToken, bookFolderIds);
     if (importedCount > 0) return { importedCount };
-
-    const linked = await addFileToAudiobooksFolder(accessToken, folderId);
-    return linked ? { importedCount: 1 } : { importedCount: 0, reason: 'Could not add folder to Audiobooks' };
   }
-
-  const linked = await addFileToAudiobooksFolder(accessToken, folderId);
-  return linked ? { importedCount: 1 } : { importedCount: 0, reason: 'Could not add folder to Audiobooks' };
+  return importFolderAsOneAudiobook(accessToken, folderId);
 }
 
 /**
