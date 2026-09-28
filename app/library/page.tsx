@@ -16,6 +16,17 @@ import { findYoutubeMatches } from '@/lib/youtubeCatalog';
 import { useCollections } from '@/lib/useCollections';
 import { useYoutubeCatalog } from '@/lib/useYoutubeCatalog';
 import { useSmartFolders, matchesSmartFolder } from '@/lib/useSmartFolders';
+import {
+  createUserdataBackup,
+  restoreUserdataBackup,
+} from '@/lib/userdataBackup';
+import {
+  applyAutoGroupSuggestions,
+  buildAutoGroupSuggestions,
+  type AutoGroupSuggestion,
+  type ManualAudiobookGroup,
+} from '@/lib/audiobookGroups';
+import { useLibraryKeyboardShortcuts } from '@/lib/useLibraryKeyboardShortcuts';
 import CollectionsManager from '@/components/CollectionsManager';
 import type { BookEntry, BookMetadata, AudiobookEntry, Audiobook, LibrarySource, MovieEntry } from '@/types/books';
 
@@ -464,18 +475,21 @@ function newManualGroupId(): string {
   }
 }
 
-function extractBaseTitle(title: string): string {
-  const base = title
-    // "Lilith Chapter 1: The Library" → "Lilith"
-    .replace(/\s+(chapter|part|book|vol\.?|volume|episode|ep\.?)\s*\d[\s\S]*$/i, '')
-    // "THE PRINCESS AND THE GOBLIN 1 Why the Princess..." → "THE PRINCESS AND THE GOBLIN"
-    .replace(/\s+\d+[\s:–—\-][\s\S]*$/, '')
-    // "45. Romans ROM1", "transition8h", trailing alpha-numeric codes → strip last token if it contains a digit
-    .replace(/\s+\w*\d+\w*$/, '')
-    // "The Great Divorce... by CS Lewis a 1" → strip trailing single-letter suffix after number stripped
-    .replace(/\s+[a-z]$/i, '')
-    .trim();
-  return base || title;
+function downloadUserdataBackup(): void {
+  const data = createUserdataBackup(window.localStorage);
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: 'application/json',
+  });
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `joshbooks-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export default function LibraryPage() {
@@ -538,12 +552,11 @@ export default function LibraryPage() {
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [mergeName, setMergeName] = useState('');
   const [mergeProgress, setMergeProgress] = useState<{ done: number; total: number; label: string } | null>(null);
-  type AutoGroupSuggestion = { id: string; name: string; memberIds: string[]; members: AudiobookEntry[]; included: boolean };
   const [autoGroupDialogOpen, setAutoGroupDialogOpen] = useState(false);
   const [autoGroupSuggestions, setAutoGroupSuggestions] = useState<AutoGroupSuggestion[]>([]);
   // Manual audiobook playlists — entry-level, stored in the per-user server store
   // (and localStorage), so merging works regardless of Drive write permissions.
-  const [manualGroups, setManualGroups] = useState<{ id: string; title: string; memberIds: string[] }[]>([]);
+  const [manualGroups, setManualGroups] = useState<ManualAudiobookGroup[]>([]);
   // ebookId -> audiobookId links (localStorage authoritative, best-effort Drive sync)
   const [links, setLinks] = useState<Record<string, string>>({});
   const [linkingBook, setLinkingBook] = useState<BookEntry | null>(null);
@@ -1279,29 +1292,9 @@ export default function LibraryPage() {
   };
 
   const openAutoGroupDialog = () => {
-    const alreadyMergedIds = new Set(manualGroups.flatMap((g) => g.memberIds));
-    const eligible = (audiobooks ?? []).filter(
-      (b) => !b.isFolder && !isManualGroupEntryId(b.id) && !alreadyMergedIds.has(b.id)
+    setAutoGroupSuggestions(
+      buildAutoGroupSuggestions(audiobooks ?? [], manualGroups, newManualGroupId),
     );
-
-    const groups = new Map<string, AudiobookEntry[]>();
-    for (const book of eligible) {
-      const base = extractBaseTitle(book.title);
-      if (base.length < 4) continue;
-      const existing = groups.get(base) ?? [];
-      existing.push(book);
-      groups.set(base, existing);
-    }
-
-    const suggestions: AutoGroupSuggestion[] = [];
-    for (const [name, members] of groups) {
-      if (members.length < 2) continue;
-      members.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }));
-      suggestions.push({ id: newManualGroupId(), name, memberIds: members.map((m) => m.id), members, included: true });
-    }
-    suggestions.sort((a, b) => b.members.length - a.members.length);
-
-    setAutoGroupSuggestions(suggestions);
     setAutoGroupDialogOpen(true);
   };
 
@@ -1314,23 +1307,18 @@ export default function LibraryPage() {
   };
 
   const confirmAutoGroups = () => {
-    const toMerge = autoGroupSuggestions.filter((s) => s.included && s.name.trim());
-    if (toMerge.length === 0) return;
-    setManualGroups((prev) => {
-      let next = [...prev];
-      for (const suggestion of toMerge) {
-        const memberSet = new Set(suggestion.memberIds);
-        next = next
-          .map((g) => ({ ...g, memberIds: g.memberIds.filter((id) => !memberSet.has(id)) }))
-          .filter((g) => g.memberIds.length > 0);
-        next.push({ id: suggestion.id, title: suggestion.name.trim(), memberIds: suggestion.memberIds });
-      }
-      return next;
-    });
+    const includedCount = autoGroupSuggestions.filter(
+      (suggestion) => suggestion.included && suggestion.name.trim(),
+    ).length;
+    if (includedCount === 0) return;
+
+    setManualGroups((previous) =>
+      applyAutoGroupSuggestions(previous, autoGroupSuggestions),
+    );
     setAutoGroupDialogOpen(false);
     setAudioGroupStatus({
       loading: false,
-      message: `Created ${toMerge.length} playlist${toMerge.length === 1 ? '' : 's'}.`,
+      message: `Created ${includedCount} playlist${includedCount === 1 ? '' : 's'}.`,
     });
   };
 
@@ -1615,108 +1603,23 @@ export default function LibraryPage() {
     return items;
   }, [books, audiobooks, movieProgress, hiddenIds]);
 
-  const STATIC_KEYS = [
-    'joshbooks-meta',
-    'joshbooks-hidden',
-    'joshbooks-links',
-    'joshbooks-audiogroups',
-    'joshbooks-youtube-links',
-    'joshbooks-youtube-removed',
-    'joshbooks-youtube-edits',
-    'joshbooks-youtube-custom',
-    'joshbooks-view',
-    'joshbooks-sort-field',
-    'joshbooks-sort-dir',
-    'joshbooks-columns',
-    'joshbooks-reader-theme',
-    'joshbooks-tab',
-    'joshbooks-audio-sort-field',
-    'joshbooks-audio-sort-dir',
-    'joshbooks-audio-speed',
-    'bookshelf-reader-fontSize',
-    'joshbooks-smart-folders',
-    'joshbooks-pdf-zoom',
-  ];
-
-  // Press "/" to focus search; Escape to clear; 1/2/3 to switch tabs
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-      if (e.key === '/') {
-        if (inInput) return;
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      } else if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
-        setSearch('');
-        searchInputRef.current?.blur();
-      } else if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (e.key === '1') setTab('ebooks');
-        else if (e.key === '2') setTab('audiobooks');
-        else if (e.key === '3') setTab('movies');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  const exportUserdata = () => {
-    try {
-      const data: Record<string, unknown> = { _version: 1, _exported: new Date().toISOString() };
-      for (const key of STATIC_KEYS) {
-        const val = window.localStorage.getItem(key);
-        if (val === null) continue;
-        try { data[key] = JSON.parse(val); } catch { data[key] = val; }
-      }
-      // Prefix-keyed movie progress
-      const movieProgressEntries: Record<string, number> = {};
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const k = window.localStorage.key(i);
-        if (k?.startsWith('joshbooks-watch-progress:')) {
-          movieProgressEntries[k] = parseInt(window.localStorage.getItem(k) ?? '0', 10);
-        }
-      }
-      if (Object.keys(movieProgressEntries).length) data['_watch_progress'] = movieProgressEntries;
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `joshbooks-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      // ignore
-    }
-  };
 
   const importUserdataRef = useRef<HTMLInputElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useLibraryKeyboardShortcuts(searchInputRef, setSearch, setTab);
 
-  const handleImportUserdata = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportUserdata = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result as string) as Record<string, unknown>;
-        for (const key of STATIC_KEYS) {
-          if (!(key in data)) continue;
-          const val = data[key];
-          window.localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
-        }
-        const watchProgress = data['_watch_progress'] as Record<string, number> | undefined;
-        if (watchProgress && typeof watchProgress === 'object') {
-          for (const [k, v] of Object.entries(watchProgress)) {
-            window.localStorage.setItem(k, String(v));
-          }
-        }
-        window.location.reload();
-      } catch {
-        alert('Failed to import — the file may be invalid or corrupted.');
-      }
-    };
-    reader.readAsText(file);
     e.target.value = '';
+    if (!file) return;
+
+    try {
+      const raw = await file.text();
+      restoreUserdataBackup(window.localStorage, raw);
+      window.location.reload();
+    } catch {
+      alert('Failed to import — the file may be invalid or corrupted.');
+    }
   };
 
   return (
@@ -1774,7 +1677,7 @@ export default function LibraryPage() {
               </button>
               <button
                 type="button"
-                onClick={exportUserdata}
+                onClick={downloadUserdataBackup}
                 title="Download a backup of all your settings, progress, and metadata"
                 className="inline-flex items-center justify-center rounded-full bg-slate-800 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
               >

@@ -37,46 +37,75 @@ function newId(): string {
   }
 }
 
+function includesQuery(value: string, query?: string): boolean {
+  if (!query) return true;
+  return value.toLowerCase().includes(query.toLowerCase());
+}
+
+function itemTitle(
+  item: BookEntry | AudiobookEntry,
+  kind: 'ebook' | 'audiobook',
+): string {
+  if (kind === 'audiobook') return (item as AudiobookEntry).title;
+  const book = item as BookEntry;
+  return book.title ?? book.name ?? '';
+}
+
+function itemAuthors(
+  item: BookEntry | AudiobookEntry,
+  kind: 'ebook' | 'audiobook',
+): string[] {
+  return kind === 'ebook'
+    ? ((item as BookEntry).authors ?? [])
+    : ((item as AudiobookEntry).authors ?? []);
+}
+
+function authorsMatch(authors: string[], query?: string): boolean {
+  if (!query) return true;
+  return authors.some((author) => includesQuery(author, query));
+}
+
+function itemYear(
+  item: BookEntry | AudiobookEntry,
+  kind: 'ebook' | 'audiobook',
+): number | null {
+  const publishedDate =
+    kind === 'ebook'
+      ? (item as BookEntry).publishedDate
+      : (item as AudiobookEntry).publishedDate;
+  const parsed = Number.parseInt(publishedDate ?? '', 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function yearMatches(folder: SmartFolder, year: number | null): boolean {
+  if (folder.yearMin !== undefined && (year === null || year < folder.yearMin)) {
+    return false;
+  }
+  if (folder.yearMax !== undefined && (year === null || year > folder.yearMax)) {
+    return false;
+  }
+  return true;
+}
+
+function ebookProgressMatches(folder: SmartFolder, item: BookEntry): boolean {
+  const progress = item.readingProgress ?? 0;
+  if (folder.hasProgress && progress === 0) return false;
+  if (folder.progressMin !== undefined && progress < folder.progressMin) return false;
+  if (folder.progressMax !== undefined && progress > folder.progressMax) return false;
+  return true;
+}
+
 export function matchesSmartFolder(
   folder: SmartFolder,
   item: BookEntry | AudiobookEntry,
   kind: 'ebook' | 'audiobook'
 ): boolean {
   if (folder.mediaType !== 'any' && folder.mediaType !== kind) return false;
-
-  const title = kind === 'ebook'
-    ? ((item as BookEntry).title ?? (item as BookEntry).name ?? '')
-    : (item as AudiobookEntry).title;
-
-  if (folder.titleKeyword) {
-    if (!title.toLowerCase().includes(folder.titleKeyword.toLowerCase())) return false;
-  }
-
-  if (folder.source) {
-    if (!item.source.toLowerCase().includes(folder.source.toLowerCase())) return false;
-  }
-
-  const authors = kind === 'ebook'
-    ? ((item as BookEntry).authors ?? [])
-    : ((item as AudiobookEntry).authors ?? []);
-  if (folder.author) {
-    const q = folder.author.toLowerCase();
-    if (!authors.some((a) => a.toLowerCase().includes(q))) return false;
-  }
-
-  const year = kind === 'ebook'
-    ? parseInt((item as BookEntry).publishedDate ?? '', 10)
-    : parseInt((item as AudiobookEntry).publishedDate ?? '', 10);
-  if (folder.yearMin && (!year || year < folder.yearMin)) return false;
-  if (folder.yearMax && (!year || year > folder.yearMax)) return false;
-
-  if (kind === 'ebook') {
-    const progress = (item as BookEntry).readingProgress ?? 0;
-    if (folder.hasProgress && progress === 0) return false;
-    if (folder.progressMin !== undefined && progress < folder.progressMin) return false;
-    if (folder.progressMax !== undefined && progress > folder.progressMax) return false;
-  }
-
+  if (!includesQuery(itemTitle(item, kind), folder.titleKeyword)) return false;
+  if (!includesQuery(item.source, folder.source)) return false;
+  if (!authorsMatch(itemAuthors(item, kind), folder.author)) return false;
+  if (!yearMatches(folder, itemYear(item, kind))) return false;
+  if (kind === 'ebook' && !ebookProgressMatches(folder, item as BookEntry)) return false;
   return true;
 }
 
