@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { google, type drive_v3 } from 'googleapis';
 import type {
   BookEntry,
   BookMetadata,
@@ -60,6 +60,9 @@ const AUDIO_MIME_TYPES = new Set([
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const SHORTCUT_MIME = 'application/vnd.google-apps.shortcut';
+
+type DriveClient = drive_v3.Drive;
+type DriveFile = drive_v3.Schema$File;
 
 const AUDIO_FILE_EXTENSIONS = new Set([
   '.mp3',
@@ -459,76 +462,70 @@ function parseAppProperties(appProperties?: Record<string, string>) {
   };
 }
 
+const BOOK_FILE_FIELDS = 'id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties';
+
+/** Books the user removed from the library stay in Drive but are marked hidden. */
+function isHiddenFromLibrary(file: DriveFile): boolean {
+  return (file.appProperties as Record<string, string> | undefined)?.m_hidden === '1';
+}
+
+/** Builds a library entry; `id`/`mimeType` may be a shortcut's target rather than the file's own. */
+function toBookEntry(
+  file: DriveFile,
+  target: { id: string; mimeType: string; format: BookFormat },
+  source: LibrarySource
+): BookEntry {
+  const appProps = parseAppProperties(file.appProperties as Record<string, string> | undefined);
+  return {
+    id: target.id,
+    name: file.name!,
+    mimeType: target.mimeType,
+    size: file.size ? parseInt(file.size as string, 10) : 0,
+    modifiedTime: file.modifiedTime!,
+    thumbnailLink: file.thumbnailLink ?? undefined,
+    source,
+    format: target.format,
+    readingProgress: appProps.readingProgress,
+    lastLocation: appProps.lastLocation,
+    lastOpened: appProps.lastOpened,
+    ...appProps.metadata,
+  };
+}
+
+/** The book a listed file stands for: a shortcut stands for its target. */
+function bookTarget(file: DriveFile): { id: string; mimeType: string; format: BookFormat } | null {
+  const isShortcut = file.mimeType === SHORTCUT_MIME;
+  const mimeType = isShortcut ? file.shortcutDetails?.targetMimeType ?? '' : file.mimeType!;
+  const format = getMimeTypeFormat(mimeType);
+  if (!format) return null;
+  const id = isShortcut ? file.shortcutDetails?.targetId ?? file.id! : file.id!;
+  return { id, mimeType, format };
+}
+
 /**
- * List all PDF and EPUB files in a specific Drive folder
- * Handles pagination automatically
+ * List the supported books directly inside a Drive folder, following
+ * shortcuts and listing each book once. Handles pagination.
  */
 export async function listFilesInFolder(
   accessToken: string,
   folderId: string,
   source: LibrarySource
 ): Promise<BookEntry[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  const files = await listAllChildren(drive, folderId, `${BOOK_FILE_FIELDS}, shortcutDetails`, {
+    where: `${SUPPORTED_MIME_QUERY} or mimeType = '${SHORTCUT_MIME}'`,
+    pageSize: 100,
+  });
 
   const books: BookEntry[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (${SUPPORTED_MIME_QUERY} or mimeType = '${SHORTCUT_MIME}')`,
-      fields:
-        'nextPageToken, files(id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties, shortcutDetails)',
-      pageSize: 100,
-      pageToken: pageToken ?? undefined,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-
-    const files = response.data.files || [];
-    for (const file of files) {
-      // For shortcuts, use the target's mimeType and id
-      const effectiveMimeType =
-        file.mimeType === SHORTCUT_MIME
-          ? (file.shortcutDetails as { targetMimeType?: string } | undefined)?.targetMimeType ?? ''
-          : file.mimeType!;
-      const effectiveId =
-        file.mimeType === SHORTCUT_MIME
-          ? (file.shortcutDetails as { targetId?: string } | undefined)?.targetId ?? file.id!
-          : file.id!;
-
-      const format = getMimeTypeFormat(effectiveMimeType);
-      if (!format) continue; // Skip unsupported formats
-
-      // Use effective id for dedup check (avoid showing both shortcut and original)
-      if (books.some((b) => b.id === effectiveId)) continue;
-
-      // Skip books the user has removed from the library (hidden, file left in Drive)
-      if ((file.appProperties as Record<string, string> | undefined)?.m_hidden === '1') continue;
-
-      const appProps = parseAppProperties(
-        file.appProperties as Record<string, string> | undefined
-      );
-
-      books.push({
-        id: effectiveId,
-        name: file.name!,
-        mimeType: effectiveMimeType,
-        size: file.size ? parseInt(file.size as string, 10) : 0,
-        modifiedTime: file.modifiedTime!,
-        thumbnailLink: file.thumbnailLink ?? undefined,
-        source,
-        format,
-        readingProgress: appProps.readingProgress,
-        lastLocation: appProps.lastLocation,
-        lastOpened: appProps.lastOpened,
-        ...appProps.metadata,
-      });
-    }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
+  const seenIds = new Set<string>();
+  for (const file of files) {
+    const target = bookTarget(file);
+    // A shortcut and its original are the same book: keep whichever comes first.
+    if (!target || seenIds.has(target.id) || isHiddenFromLibrary(file)) continue;
+    seenIds.add(target.id);
+    books.push(toBookEntry(file, target, source));
+  }
   return books;
 }
 
@@ -551,73 +548,51 @@ export async function findLocalBooksFolderId(accessToken: string): Promise<strin
 }
 
 /**
- * Get all library files from all sources (three fixed folders + Local Books if found)
- * Deduplicates by file ID
+ * Lists one library source, logging and returning nothing if it fails so the
+ * rest of the library still loads.
+ */
+async function listSourceSafely(label: string, list: () => Promise<BookEntry[]>): Promise<BookEntry[]> {
+  try {
+    return await list();
+  } catch (error) {
+    console.error(`Failed to fetch from ${label}:`, error);
+    return [];
+  }
+}
+
+async function listLocalBooks(accessToken: string): Promise<BookEntry[]> {
+  const localBooksId = await findLocalBooksFolderId(accessToken);
+  return localBooksId ? listFilesInFolder(accessToken, localBooksId, 'Local Books') : [];
+}
+
+/**
+ * Get all library files from every source: the fixed folders, the permanent
+ * ebook collections (recursively) and Local Books if it exists. A book found
+ * in several sources is listed once, from the first source listed here.
  */
 export async function getAllLibraryFiles(accessToken: string): Promise<BookEntry[]> {
-  const allBooks: BookEntry[] = [];
+  const fixed = Promise.all(
+    Object.entries(FIXED_FOLDERS).map(([source, folderId]) =>
+      listSourceSafely(source, () =>
+        listFilesInFolder(accessToken, folderId, source as Exclude<LibrarySource, 'Local Books'>)
+      )
+    )
+  );
+  const collections = Promise.all(
+    Object.entries(EBOOK_FOLDERS).map(([source, folderId]) =>
+      listSourceSafely(source, () => listFilesInFolderRecursive(accessToken, folderId, source as LibrarySource))
+    )
+  );
+  const local = listSourceSafely('Local Books', () => listLocalBooks(accessToken));
+
   const seenIds = new Set<string>();
-
-  // Fetch from the three fixed folders in parallel.
-  const fixedFolderResults = await Promise.all(
-    Object.entries(FIXED_FOLDERS).map(async ([source, folderId]) => {
-      try {
-        const books = await listFilesInFolder(
-          accessToken,
-          folderId,
-          source as Exclude<LibrarySource, 'Local Books'>
-        );
-        return { source, books };
-      } catch (error) {
-        console.error(`Failed to fetch from ${source}:`, error);
-        return { source, books: [] as BookEntry[] };
-      }
-    })
-  );
-
-  for (const { books } of fixedFolderResults) {
-    for (const book of books) {
-      if (!seenIds.has(book.id)) {
-        allBooks.push(book);
-        seenIds.add(book.id);
-      }
-    }
+  const books: BookEntry[] = [];
+  for (const book of [...(await fixed), ...(await collections), await local].flat()) {
+    if (seenIds.has(book.id)) continue;
+    seenIds.add(book.id);
+    books.push(book);
   }
-
-  // Fetch recursively from the permanent ebook collection folders
-  await Promise.all(
-    Object.entries(EBOOK_FOLDERS).map(async ([source, folderId]) => {
-      try {
-        const books = await listFilesInFolderRecursive(accessToken, folderId, source as LibrarySource);
-        for (const book of books) {
-          if (!seenIds.has(book.id)) {
-            allBooks.push(book);
-            seenIds.add(book.id);
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to fetch from ${source}:`, error);
-      }
-    })
-  );
-
-  // Try to fetch from Local Books if it exists
-  try {
-    const localBooksId = await findLocalBooksFolderId(accessToken);
-    if (localBooksId) {
-      const books = await listFilesInFolder(accessToken, localBooksId, 'Local Books');
-      for (const book of books) {
-        if (!seenIds.has(book.id)) {
-          allBooks.push(book);
-          seenIds.add(book.id);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Failed to fetch from Local Books:', error);
-  }
-
-  return allBooks;
+  return books;
 }
 
 /** Parse audiobook metadata + resume position from a folder/file's appProperties. */
@@ -769,181 +744,129 @@ export async function getAudiobooks(accessToken: string): Promise<AudiobookEntry
   return audiobooks;
 }
 
-type DriveClient = ReturnType<typeof google.drive>;
-
-type DriveAudioFile = {
-  id?: string | null;
-  name?: string | null;
-  size?: string | number | null;
-  parents?: string[] | null;
-  mimeType?: string | null;
-  appProperties?: Record<string, string> | null;
-  shortcutDetails?: {
-    targetId?: string | null;
-    targetMimeType?: string | null;
-  } | null;
-};
-
-function streamFileId(file: DriveAudioFile): string {
-  if (file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId) {
-    return file.shortcutDetails.targetId;
-  }
-  if (!file.id) throw new Error('Drive audio entry is missing an id');
-  return file.id;
+interface ListChildrenOptions {
+  /** Extra Drive query clause, ANDed with the parent/trashed filter. */
+  where?: string;
+  pageSize?: number;
+  /** Include shared-drive items (default true). */
+  allDrives?: boolean;
 }
 
-function toAudioTrack(file: DriveAudioFile): AudioTrack {
-  if (!file.name) throw new Error('Drive audio entry is missing a name');
+/** Lists every non-trashed child of a folder, following all result pages. */
+async function listAllChildren(
+  drive: DriveClient,
+  folderId: string,
+  fileFields: string,
+  { where, pageSize = 200, allDrives = true }: ListChildrenOptions = {}
+): Promise<DriveFile[]> {
+  const baseQuery = `'${folderId}' in parents and trashed = false`;
+  const q = where ? `${baseQuery} and (${where})` : baseQuery;
+  const files: DriveFile[] = [];
+  let pageToken: string | null | undefined;
+  do {
+    const response = await drive.files.list({
+      q,
+      fields: `nextPageToken, files(${fileFields})`,
+      pageSize,
+      pageToken: pageToken ?? undefined,
+      ...(allDrives ? { supportsAllDrives: true, includeItemsFromAllDrives: true } : {}),
+    });
+    files.push(...(response.data.files || []));
+    pageToken = response.data.nextPageToken;
+  } while (pageToken);
+  return files;
+}
+
+/** Drive shortcuts play or open their target; everything else is used directly. */
+function resolvedFileId(file: DriveFile): string {
+  return file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId
+    ? file.shortcutDetails.targetId
+    : file.id!;
+}
+
+function toAudioTrack(file: DriveFile): AudioTrack {
   return {
-    id: streamFileId(file),
-    name: file.name,
-    size: file.size ? parseInt(String(file.size), 10) : 0,
+    id: resolvedFileId(file),
+    name: file.name!,
+    size: file.size ? parseInt(file.size as string, 10) : 0,
   };
 }
 
-async function listSiblingAudioTracks(
-  drive: DriveClient,
-  parent: string,
-  key: string,
-): Promise<AudioTrack[]> {
-  const siblings: AudioTrack[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${parent}' in parents and trashed = false`,
-      fields:
-        'nextPageToken, files(id, name, mimeType, size, appProperties, shortcutDetails)',
-      pageSize: 200,
-      pageToken: pageToken ?? undefined,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-
-    for (const file of response.data.files || []) {
-      const kind = classifyAudiobookChildMime(
-        file.mimeType,
-        file.shortcutDetails?.targetMimeType,
-      );
-      if (kind !== 'audio' || !file.name) continue;
-
-      const props = file.appProperties as Record<string, string> | undefined;
-      const siblingKey = manualAudioGroupKey(props) || deriveBookKey(file.name);
-      if (siblingKey === key) siblings.push(toAudioTrack(file));
-    }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
-  siblings.sort((a, b) => naturalCompare(a.name, b.name));
-  return siblings;
-}
-
-async function getLooseAudiobookTracks(
-  drive: DriveClient,
-  id: string,
-): Promise<AudioTrack[]> {
-  const response = await drive.files.get({
-    fileId: id,
-    fields: 'id, name, size, parents, appProperties, mimeType, shortcutDetails',
-    supportsAllDrives: true,
-  });
-  const file = response.data;
-  if (!file.name) throw new Error('Drive audio entry is missing a name');
-
-  const fallback = toAudioTrack(file);
-  const parent = file.parents?.[0];
-  if (!parent) return [fallback];
-
+function audioBookKey(file: DriveFile): string {
   const props = file.appProperties as Record<string, string> | undefined;
-  const key = manualAudioGroupKey(props) || deriveBookKey(file.name);
-  const siblings = await listSiblingAudioTracks(drive, parent, key);
-  return siblings.length > 0 ? siblings : [fallback];
+  return manualAudioGroupKey(props) || deriveBookKey(file.name!);
 }
 
-async function resolveFolderTargetId(
-  drive: DriveClient,
-  id: string,
-): Promise<string> {
-  const response = await drive.files.get({
-    fileId: id,
-    fields: 'mimeType, shortcutDetails',
-    supportsAllDrives: true,
-  });
-  const file = response.data;
-  return file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId
-    ? file.shortcutDetails.targetId
-    : id;
+function childKind(file: DriveFile): 'folder' | 'audio' | null {
+  return classifyAudiobookChildMime(file.mimeType, file.shortcutDetails?.targetMimeType);
 }
 
-async function listFolderChildren(
-  drive: DriveClient,
-  folderId: string,
-): Promise<{ tracks: AudioTrack[]; subFolders: { id: string; name: string }[] }> {
-  const tracks: AudioTrack[] = [];
-  const subFolders: { id: string; name: string }[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id, name, mimeType, size, shortcutDetails)',
-      pageSize: 200,
-      pageToken: pageToken ?? undefined,
+/**
+ * A loose-file audiobook is represented by its first chapter. Its tracks are
+ * the sibling chapters with the same book key (or manual group); if none are
+ * found, the file alone.
+ */
+async function getLooseFileTracks(drive: DriveClient, id: string): Promise<AudioTrack[]> {
+  const file = (
+    await drive.files.get({
+      fileId: id,
+      fields: 'id, name, size, parents, appProperties, mimeType, shortcutDetails',
       supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
+    })
+  ).data;
+  const parent = file.parents?.[0];
+  if (!parent) return [toAudioTrack(file)];
 
-    for (const file of response.data.files || []) {
-      const kind = classifyAudiobookChildMime(
-        file.mimeType,
-        file.shortcutDetails?.targetMimeType,
-      );
-      if (kind === 'audio') {
-        tracks.push(toAudioTrack(file));
-      } else if (kind === 'folder' && file.name) {
-        subFolders.push({ id: streamFileId(file), name: file.name });
-      }
-    }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
-  return { tracks, subFolders };
+  const key = audioBookKey(file);
+  const siblings = (
+    await listAllChildren(drive, parent, 'id, name, mimeType, size, appProperties, shortcutDetails')
+  )
+    .filter((child) => childKind(child) === 'audio' && audioBookKey(child) === key)
+    .map(toAudioTrack)
+    .sort((a, b) => naturalCompare(a.name, b.name));
+  return siblings.length > 0 ? siblings : [toAudioTrack(file)];
 }
 
-async function collectFolderAudiobookTracks(
+/** All audio in a folder audiobook, including nested (e.g. per-disc) folders. */
+async function getFolderTracks(
+  accessToken: string,
   drive: DriveClient,
-  folderId: string,
+  id: string
 ): Promise<AudioTrack[]> {
-  const { tracks, subFolders } = await listFolderChildren(drive, folderId);
-  subFolders.sort((a, b) => naturalCompare(a.name, b.name));
+  const entry = (
+    await drive.files.get({ fileId: id, fields: 'mimeType, shortcutDetails', supportsAllDrives: true })
+  ).data;
+  const folderId =
+    entry.mimeType === SHORTCUT_MIME && entry.shortcutDetails?.targetId
+      ? entry.shortcutDetails.targetId
+      : id;
 
-  for (const subFolder of subFolders) {
-    tracks.push(...(await collectFolderAudiobookTracks(drive, subFolder.id)));
+  const children = await listAllChildren(drive, folderId, 'id, name, mimeType, size, shortcutDetails');
+  const tracks = children.filter((child) => childKind(child) === 'audio').map(toAudioTrack);
+  const subFolders = children
+    .filter((child) => childKind(child) === 'folder')
+    .map((child) => ({ id: resolvedFileId(child), name: child.name! }))
+    .sort((a, b) => naturalCompare(a.name, b.name));
+
+  for (const sub of subFolders) {
+    tracks.push(...(await getAudiobookTracks(accessToken, sub.id, true)));
   }
-
-  tracks.sort((a, b) => naturalCompare(a.name, b.name));
-  return tracks;
+  // Keep one stable natural order across direct and nested tracks.
+  return tracks.sort((a, b) => naturalCompare(a.name, b.name));
 }
 
 /**
  * Recursively gather the audio tracks for one audiobook. For a folder id this
  * walks all nested folders (e.g. per-disc subfolders); for a single audio file
- * it returns that file plus matching sibling chapters.
+ * it returns that file's chapter group.
  */
 export async function getAudiobookTracks(
   accessToken: string,
   id: string,
-  isFolder: boolean,
+  isFolder: boolean
 ): Promise<AudioTrack[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
-
-  if (!isFolder) return getLooseAudiobookTracks(drive, id);
-
-  const folderId = await resolveFolderTargetId(drive, id);
-  return collectFolderAudiobookTracks(drive, folderId);
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  return isFolder ? getFolderTracks(accessToken, drive, id) : getLooseFileTracks(drive, id);
 }
 
 /** Fetch one audiobook's title + metadata + resume position by id. */
@@ -976,86 +899,66 @@ function makeManualAudioGroupId(title: string): string {
   return `${slug}-${Date.now().toString(36)}`;
 }
 
+/** Writes the manual-group labels onto each file ('' clears them). */
+async function setAudioGroupLabels(
+  drive: DriveClient,
+  fileIds: Iterable<string>,
+  labels: { m_audio_group: string; m_audio_group_title: string }
+): Promise<void> {
+  await Promise.all(
+    [...fileIds].map((fileId) =>
+      drive.files.update({ fileId, requestBody: { appProperties: labels }, fields: 'id' })
+    )
+  );
+}
+
+/** Every chapter file behind the selected loose-file audiobooks. Folders are refused. */
+async function collectLooseTrackIds(accessToken: string, ids: string[]): Promise<Set<string>> {
+  const trackIds = new Set<string>();
+  for (const id of ids) {
+    const meta = await getAudiobookMeta(accessToken, id);
+    if (meta.isFolder) throw new Error('Only loose audio files can be merged.');
+    for (const track of await getAudiobookTracks(accessToken, id, false)) trackIds.add(track.id);
+  }
+  return trackIds;
+}
+
 /** Merge selected loose-file audiobook entries into one named group. */
 export async function groupAudiobooks(
   accessToken: string,
   ids: string[],
   title: string
 ): Promise<void> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
   const cleanTitle = title.trim();
   if (ids.length < 2 || !cleanTitle) throw new Error('A group needs at least two audiobooks and a title.');
 
-  const trackIds = new Set<string>();
-  for (const id of ids) {
-    const meta = await getAudiobookMeta(accessToken, id);
-    if (meta.isFolder) throw new Error('Only loose audio files can be merged.');
-    const tracks = await getAudiobookTracks(accessToken, id, false);
-    for (const track of tracks) trackIds.add(track.id);
-  }
-
+  const trackIds = await collectLooseTrackIds(accessToken, ids);
   if (trackIds.size < 2) throw new Error('A group needs at least two audio files.');
 
-  const groupId = makeManualAudioGroupId(cleanTitle);
-  await Promise.all(
-    [...trackIds].map((fileId) =>
-      drive.files.update({
-        fileId,
-        requestBody: {
-          appProperties: {
-            m_audio_group: groupId,
-            m_audio_group_title: cleanTitle,
-          },
-        },
-        fields: 'id',
-      })
-    )
-  );
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  await setAudioGroupLabels(drive, trackIds, {
+    m_audio_group: makeManualAudioGroupId(cleanTitle),
+    m_audio_group_title: cleanTitle,
+  });
 }
 
 /** Remove a manual loose-file audiobook grouping created by groupAudiobooks. */
 export async function ungroupAudiobook(accessToken: string, id: string): Promise<void> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
-  const file = await drive.files.get({ fileId: id, fields: 'id, name, parents, appProperties, mimeType' });
-  if (file.data.mimeType === FOLDER_MIME) throw new Error('Drive folders cannot be unmerged.');
-  const props = file.data.appProperties as Record<string, string> | undefined;
-  const groupId = props?.m_audio_group;
-  const parent = file.data.parents?.[0];
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  const file = (
+    await drive.files.get({ fileId: id, fields: 'id, name, parents, appProperties, mimeType' })
+  ).data;
+  if (file.mimeType === FOLDER_MIME) throw new Error('Drive folders cannot be unmerged.');
+  const groupId = (file.appProperties as Record<string, string> | undefined)?.m_audio_group;
+  const parent = file.parents?.[0];
   if (!groupId || !parent) throw new Error('This audiobook is not a manual group.');
 
-  const groupedIds: string[] = [];
-  let pageToken: string | null | undefined;
-  do {
-    const response = await drive.files.list({
-      q: `'${parent}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id, mimeType, appProperties)',
-      pageSize: 200,
-      pageToken: pageToken ?? undefined,
-    });
-    for (const sibling of response.data.files || []) {
-      if (!isAudioMime(sibling.mimeType)) continue;
-      const siblingProps = sibling.appProperties as Record<string, string> | undefined;
-      if (siblingProps?.m_audio_group === groupId) groupedIds.push(sibling.id!);
-    }
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
-  await Promise.all(
-    groupedIds.map((fileId) =>
-      drive.files.update({
-        fileId,
-        requestBody: {
-          appProperties: {
-            m_audio_group: '',
-            m_audio_group_title: '',
-          },
-        },
-        fields: 'id',
-      })
-    )
-  );
+  const siblings = await listAllChildren(drive, parent, 'id, mimeType, appProperties', { allDrives: false });
+  const groupedIds = siblings
+    .filter((sibling) => isAudioMime(sibling.mimeType))
+    .filter((sibling) => (sibling.appProperties as Record<string, string> | undefined)?.m_audio_group === groupId)
+    .map((sibling) => sibling.id!);
+  await setAudioGroupLabels(drive, groupedIds, { m_audio_group: '', m_audio_group_title: '' });
 }
 
 /**
@@ -1152,24 +1055,37 @@ export async function updateBookMetadata(
   fileId: string,
   metadata: BookMetadata
 ): Promise<void> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  await drive.files.update({
+    fileId,
+    // appProperties accepts null values to delete keys; the typed client omits null from its type.
+    requestBody: { appProperties: metadataToAppProperties(metadata) as unknown as Record<string, string> },
+  });
+}
 
-  // Resolve the cover into one of three storage forms (compact ids preferred,
-  // raw URL only as a fallback for manually-entered covers that fit).
-  let gbid = metadata.googleBooksId;
-  let olcid = metadata.openLibraryCoverId;
-  let coverRaw: string | undefined;
-  if (!gbid && !olcid && metadata.coverUrl) {
-    const gbMatch = metadata.coverUrl.match(/books\.google\.[^/]+\/books\/content\?id=([^&]+)/);
-    const olMatch = metadata.coverUrl.match(/covers\.openlibrary\.org\/b\/id\/(\d+)/);
-    if (gbMatch) gbid = gbMatch[1];
-    else if (olMatch) olcid = olMatch[1];
-    else if (Buffer.byteLength(`m_cover${metadata.coverUrl}`, 'utf8') <= 124) coverRaw = metadata.coverUrl;
+/**
+ * Chooses how to store a cover: compact Google Books / Open Library ids are
+ * preferred; a raw URL is kept only for manually entered covers that fit.
+ */
+function coverStorage(metadata: BookMetadata): { m_gbid?: string; m_olcid?: string; m_cover?: string } {
+  if (metadata.googleBooksId || metadata.openLibraryCoverId || !metadata.coverUrl) {
+    return { m_gbid: metadata.googleBooksId, m_olcid: metadata.openLibraryCoverId };
   }
+  const url = metadata.coverUrl;
+  const googleBooksId = url.match(/books\.google\.[^/]+\/books\/content\?id=([^&]+)/)?.[1];
+  if (googleBooksId) return { m_gbid: googleBooksId };
+  const openLibraryId = url.match(/covers\.openlibrary\.org\/b\/id\/(\d+)/)?.[1];
+  if (openLibraryId) return { m_olcid: openLibraryId };
+  return Buffer.byteLength(`m_cover${url}`, 'utf8') <= 124 ? { m_cover: url } : {};
+}
 
-  // Build the full m_* map. Empty/undefined values become null so Drive DELETES
-  // that property — this lets manual edits clear a field rather than leave a stale value.
+/**
+ * The full m_* property map for a book. Empty values become null so Drive
+ * DELETES that property, letting a manual edit clear a field rather than
+ * leave a stale value. Reading-progress keys are never included.
+ */
+function metadataToAppProperties(metadata: BookMetadata): Record<string, string | null> {
+  const cover = coverStorage(metadata);
   const raw: Record<string, string | undefined> = {
     m_title: metadata.title,
     m_authors: metadata.authors?.join('; '),
@@ -1182,22 +1098,17 @@ export async function updateBookMetadata(
     m_pages: metadata.pageCount !== undefined ? String(metadata.pageCount) : undefined,
     m_lang: metadata.language,
     m_isbn: metadata.isbn,
-    m_gbid: gbid,
-    m_olcid: olcid,
-    m_cover: coverRaw,
+    m_gbid: cover.m_gbid,
+    m_olcid: cover.m_olcid,
+    m_cover: cover.m_cover,
     m_src: metadata.metadataSource ?? 'manual',
   };
-
-  const appProperties: Record<string, string | null> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    appProperties[key] = value === undefined || value === '' ? null : truncateForProperty(key, value);
-  }
-
-  await drive.files.update({
-    fileId,
-    // appProperties accepts null values to delete keys; the typed client omits null from its type.
-    requestBody: { appProperties: appProperties as unknown as Record<string, string> },
-  });
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => [
+      key,
+      value === undefined || value === '' ? null : truncateForProperty(key, value),
+    ])
+  );
 }
 
 /**
@@ -1297,6 +1208,37 @@ export async function addFileToAudiobooksFolder(
   return addFileToLibraryFolder(accessToken, fileId, AUDIOBOOK_FOLDERS[source]);
 }
 
+/**
+ * Drive no longer supports multiple parents, so a file that already lives
+ * elsewhere is linked with a shortcut; if that fails, a copy is made.
+ */
+async function linkFileElsewhere(
+  drive: DriveClient,
+  file: { fileId: string; name: string; mimeType: string },
+  folderId: string
+): Promise<void> {
+  try {
+    await drive.files.create({
+      requestBody: {
+        name: file.name,
+        mimeType: SHORTCUT_MIME,
+        parents: [folderId],
+        shortcutDetails: { targetId: file.fileId, targetMimeType: file.mimeType },
+      },
+      supportsAllDrives: true,
+      fields: 'id',
+    });
+  } catch (shortcutError) {
+    console.warn(`Shortcut failed for ${file.fileId}, trying copy:`, shortcutError);
+    await drive.files.copy({
+      fileId: file.fileId,
+      requestBody: { name: file.name, parents: [folderId] },
+      supportsAllDrives: true,
+      fields: 'id',
+    });
+  }
+}
+
 async function addFileToLibraryFolder(
   accessToken: string,
   fileId: string,
@@ -1331,35 +1273,8 @@ async function addFileToLibraryFolder(
       return true;
     }
 
-    // Drive no longer supports multiple parents — link via shortcut instead.
-    try {
-      await drive.files.create({
-        requestBody: {
-          name,
-          mimeType: SHORTCUT_MIME,
-          parents: [folderId],
-          shortcutDetails: {
-            targetId: fileId,
-            targetMimeType: mimeType,
-          },
-        },
-        supportsAllDrives: true,
-        fields: 'id',
-      });
-      return true;
-    } catch (shortcutError) {
-      console.warn(`Shortcut failed for ${fileId}, trying copy:`, shortcutError);
-      await drive.files.copy({
-        fileId,
-        requestBody: {
-          name,
-          parents: [folderId],
-        },
-        supportsAllDrives: true,
-        fields: 'id',
-      });
-      return true;
-    }
+    await linkFileElsewhere(drive, { fileId, name, mimeType }, folderId);
+    return true;
   } catch (error) {
     console.error(`Failed to add file ${fileId} to folder ${folderId}:`, error);
     return false;
@@ -1390,35 +1305,15 @@ async function listImmediateFolderChildren(
   accessToken: string,
   folderId: string
 ): Promise<DriveChild[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
-  const children: DriveChild[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id, name, mimeType, shortcutDetails)',
-      pageSize: 200,
-      pageToken: pageToken ?? undefined,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-    });
-
-    for (const file of response.data.files || []) {
-      children.push({
-        id: file.id!,
-        name: file.name!,
-        mimeType: file.mimeType!,
-        shortcutTargetMime: file.shortcutDetails?.targetMimeType ?? undefined,
-        shortcutTargetId: file.shortcutDetails?.targetId ?? undefined,
-      });
-    }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
-  return children;
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  const files = await listAllChildren(drive, folderId, 'id, name, mimeType, shortcutDetails');
+  return files.map((file) => ({
+    id: file.id!,
+    name: file.name!,
+    mimeType: file.mimeType!,
+    shortcutTargetMime: file.shortcutDetails?.targetMimeType ?? undefined,
+    shortcutTargetId: file.shortcutDetails?.targetId ?? undefined,
+  }));
 }
 
 async function folderContainsAudioRecursive(accessToken: string, folderId: string): Promise<boolean> {
@@ -1452,41 +1347,49 @@ export async function importAudioFileToAudiobooks(
   return linked ? { ok: true } : { ok: false, reason: 'Could not add file to Audiobooks folder' };
 }
 
+/** Links a whole folder as one audiobook. */
+async function importFolderAsOneAudiobook(
+  accessToken: string,
+  folderId: string
+): Promise<{ importedCount: number; reason?: string }> {
+  const linked = await addFileToAudiobooksFolder(accessToken, folderId);
+  return linked ? { importedCount: 1 } : { importedCount: 0, reason: 'Could not add folder to Audiobooks' };
+}
+
+/** Links each audio-bearing book folder in a collection; returns how many linked. */
+async function importCollectionBooks(accessToken: string, bookFolderIds: string[]): Promise<number> {
+  let importedCount = 0;
+  for (const bookFolderId of bookFolderIds) {
+    if (!(await folderContainsAudioRecursive(accessToken, bookFolderId))) continue;
+    if (await addFileToAudiobooksFolder(accessToken, bookFolderId)) importedCount += 1;
+  }
+  return importedCount;
+}
+
 /**
  * Import a Drive folder into Audiobooks. Book collections (subfolders only) are
- * linked individually; single-book folders are linked as one unit.
+ * linked individually; single-book folders are linked as one unit. If no book
+ * in a collection can be linked, the collection is linked as one instead.
  */
 export async function importAudioFolderToAudiobooks(
   accessToken: string,
   folderId: string
 ): Promise<{ importedCount: number; reason?: string }> {
-  const hasAudio = await folderContainsAudioRecursive(accessToken, folderId);
-  if (!hasAudio) {
+  if (!(await folderContainsAudioRecursive(accessToken, folderId))) {
     return { importedCount: 0, reason: 'No audio files found in folder' };
   }
 
   const children = await listImmediateFolderChildren(accessToken, folderId);
-  const subfolders = children.filter((child) => folderChildTargetId(child) !== null);
-  const looseAudio = children.filter(
+  const bookFolderIds = children.map(folderChildTargetId).filter((id): id is string => id !== null);
+  const hasLooseAudio = children.some(
     (child) => classifyAudiobookChildMime(child.mimeType, child.shortcutTargetMime) === 'audio'
   );
 
-  if (subfolders.length > 0 && looseAudio.length === 0) {
-    let importedCount = 0;
-    for (const subfolder of subfolders) {
-      const subfolderId = folderChildTargetId(subfolder)!;
-      if (!(await folderContainsAudioRecursive(accessToken, subfolderId))) continue;
-      const linked = await addFileToAudiobooksFolder(accessToken, subfolderId);
-      if (linked) importedCount += 1;
-    }
+  if (bookFolderIds.length > 0 && !hasLooseAudio) {
+    const importedCount = await importCollectionBooks(accessToken, bookFolderIds);
     if (importedCount > 0) return { importedCount };
-
-    const linked = await addFileToAudiobooksFolder(accessToken, folderId);
-    return linked ? { importedCount: 1 } : { importedCount: 0, reason: 'Could not add folder to Audiobooks' };
   }
-
-  const linked = await addFileToAudiobooksFolder(accessToken, folderId);
-  return linked ? { importedCount: 1 } : { importedCount: 0, reason: 'Could not add folder to Audiobooks' };
+  return importFolderAsOneAudiobook(accessToken, folderId);
 }
 
 /**
@@ -1498,58 +1401,23 @@ export async function listFilesInFolderRecursive(
   folderId: string,
   source: LibrarySource = 'Unsorted'
 ): Promise<BookEntry[]> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  // Unlike listFilesInFolder, this does not follow shortcuts or search shared drives.
+  const files = await listAllChildren(drive, folderId, BOOK_FILE_FIELDS, {
+    where: `${SUPPORTED_MIME_QUERY} or mimeType = '${FOLDER_MIME}'`,
+    pageSize: 100,
+    allDrives: false,
+  });
 
   const books: BookEntry[] = [];
-  let pageToken: string | null | undefined;
-
-  do {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (${SUPPORTED_MIME_QUERY} or mimeType = 'application/vnd.google-apps.folder')`,
-      fields:
-        'nextPageToken, files(id, name, mimeType, size, modifiedTime, thumbnailLink, appProperties)',
-      pageSize: 100,
-      pageToken: pageToken ?? undefined,
-    });
-
-    const files = response.data.files || [];
-    for (const file of files) {
-      // If it's a folder, recursively list files within it
-      if (file.mimeType === 'application/vnd.google-apps.folder') {
-        const nestedBooks = await listFilesInFolderRecursive(accessToken, file.id!, source);
-        books.push(...nestedBooks);
-        continue;
-      }
-
-      const format = getMimeTypeFormat(file.mimeType!);
-      if (!format) continue; // Skip unsupported formats
-
-      // Skip books the user has removed from the library (hidden, file left in Drive)
-      if ((file.appProperties as Record<string, string> | undefined)?.m_hidden === '1') continue;
-
-      const appProps = parseAppProperties(
-        file.appProperties as Record<string, string> | undefined
-      );
-
-      books.push({
-        id: file.id!,
-        name: file.name!,
-        mimeType: file.mimeType!,
-        size: file.size ? parseInt(file.size as string, 10) : 0,
-        modifiedTime: file.modifiedTime!,
-        thumbnailLink: file.thumbnailLink ?? undefined,
-        source,
-        format,
-        readingProgress: appProps.readingProgress,
-        lastLocation: appProps.lastLocation,
-        lastOpened: appProps.lastOpened,
-        ...appProps.metadata,
-      });
+  for (const file of files) {
+    if (file.mimeType === FOLDER_MIME) {
+      books.push(...(await listFilesInFolderRecursive(accessToken, file.id!, source)));
+      continue;
     }
-
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
+    const format = getMimeTypeFormat(file.mimeType!);
+    if (!format || isHiddenFromLibrary(file)) continue;
+    books.push(toBookEntry(file, { id: file.id!, mimeType: file.mimeType!, format }, source));
+  }
   return books;
 }
