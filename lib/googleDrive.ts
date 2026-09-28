@@ -921,86 +921,66 @@ function makeManualAudioGroupId(title: string): string {
   return `${slug}-${Date.now().toString(36)}`;
 }
 
+/** Writes the manual-group labels onto each file ('' clears them). */
+async function setAudioGroupLabels(
+  drive: DriveClient,
+  fileIds: Iterable<string>,
+  labels: { m_audio_group: string; m_audio_group_title: string }
+): Promise<void> {
+  await Promise.all(
+    [...fileIds].map((fileId) =>
+      drive.files.update({ fileId, requestBody: { appProperties: labels }, fields: 'id' })
+    )
+  );
+}
+
+/** Every chapter file behind the selected loose-file audiobooks. Folders are refused. */
+async function collectLooseTrackIds(accessToken: string, ids: string[]): Promise<Set<string>> {
+  const trackIds = new Set<string>();
+  for (const id of ids) {
+    const meta = await getAudiobookMeta(accessToken, id);
+    if (meta.isFolder) throw new Error('Only loose audio files can be merged.');
+    for (const track of await getAudiobookTracks(accessToken, id, false)) trackIds.add(track.id);
+  }
+  return trackIds;
+}
+
 /** Merge selected loose-file audiobook entries into one named group. */
 export async function groupAudiobooks(
   accessToken: string,
   ids: string[],
   title: string
 ): Promise<void> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
   const cleanTitle = title.trim();
   if (ids.length < 2 || !cleanTitle) throw new Error('A group needs at least two audiobooks and a title.');
 
-  const trackIds = new Set<string>();
-  for (const id of ids) {
-    const meta = await getAudiobookMeta(accessToken, id);
-    if (meta.isFolder) throw new Error('Only loose audio files can be merged.');
-    const tracks = await getAudiobookTracks(accessToken, id, false);
-    for (const track of tracks) trackIds.add(track.id);
-  }
-
+  const trackIds = await collectLooseTrackIds(accessToken, ids);
   if (trackIds.size < 2) throw new Error('A group needs at least two audio files.');
 
-  const groupId = makeManualAudioGroupId(cleanTitle);
-  await Promise.all(
-    [...trackIds].map((fileId) =>
-      drive.files.update({
-        fileId,
-        requestBody: {
-          appProperties: {
-            m_audio_group: groupId,
-            m_audio_group_title: cleanTitle,
-          },
-        },
-        fields: 'id',
-      })
-    )
-  );
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  await setAudioGroupLabels(drive, trackIds, {
+    m_audio_group: makeManualAudioGroupId(cleanTitle),
+    m_audio_group_title: cleanTitle,
+  });
 }
 
 /** Remove a manual loose-file audiobook grouping created by groupAudiobooks. */
 export async function ungroupAudiobook(accessToken: string, id: string): Promise<void> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
-  const file = await drive.files.get({ fileId: id, fields: 'id, name, parents, appProperties, mimeType' });
-  if (file.data.mimeType === FOLDER_MIME) throw new Error('Drive folders cannot be unmerged.');
-  const props = file.data.appProperties as Record<string, string> | undefined;
-  const groupId = props?.m_audio_group;
-  const parent = file.data.parents?.[0];
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  const file = (
+    await drive.files.get({ fileId: id, fields: 'id, name, parents, appProperties, mimeType' })
+  ).data;
+  if (file.mimeType === FOLDER_MIME) throw new Error('Drive folders cannot be unmerged.');
+  const groupId = (file.appProperties as Record<string, string> | undefined)?.m_audio_group;
+  const parent = file.parents?.[0];
   if (!groupId || !parent) throw new Error('This audiobook is not a manual group.');
 
-  const groupedIds: string[] = [];
-  let pageToken: string | null | undefined;
-  do {
-    const response = await drive.files.list({
-      q: `'${parent}' in parents and trashed = false`,
-      fields: 'nextPageToken, files(id, mimeType, appProperties)',
-      pageSize: 200,
-      pageToken: pageToken ?? undefined,
-    });
-    for (const sibling of response.data.files || []) {
-      if (!isAudioMime(sibling.mimeType)) continue;
-      const siblingProps = sibling.appProperties as Record<string, string> | undefined;
-      if (siblingProps?.m_audio_group === groupId) groupedIds.push(sibling.id!);
-    }
-    pageToken = response.data.nextPageToken;
-  } while (pageToken);
-
-  await Promise.all(
-    groupedIds.map((fileId) =>
-      drive.files.update({
-        fileId,
-        requestBody: {
-          appProperties: {
-            m_audio_group: '',
-            m_audio_group_title: '',
-          },
-        },
-        fields: 'id',
-      })
-    )
-  );
+  const siblings = await listAllChildren(drive, parent, 'id, mimeType, appProperties', { allDrives: false });
+  const groupedIds = siblings
+    .filter((sibling) => isAudioMime(sibling.mimeType))
+    .filter((sibling) => (sibling.appProperties as Record<string, string> | undefined)?.m_audio_group === groupId)
+    .map((sibling) => sibling.id!);
+  await setAudioGroupLabels(drive, groupedIds, { m_audio_group: '', m_audio_group_title: '' });
 }
 
 /**
