@@ -1097,24 +1097,37 @@ export async function updateBookMetadata(
   fileId: string,
   metadata: BookMetadata
 ): Promise<void> {
-  const auth = getOAuthClient(accessToken);
-  const drive = google.drive({ version: 'v3', auth });
+  const drive = google.drive({ version: 'v3', auth: getOAuthClient(accessToken) });
+  await drive.files.update({
+    fileId,
+    // appProperties accepts null values to delete keys; the typed client omits null from its type.
+    requestBody: { appProperties: metadataToAppProperties(metadata) as unknown as Record<string, string> },
+  });
+}
 
-  // Resolve the cover into one of three storage forms (compact ids preferred,
-  // raw URL only as a fallback for manually-entered covers that fit).
-  let gbid = metadata.googleBooksId;
-  let olcid = metadata.openLibraryCoverId;
-  let coverRaw: string | undefined;
-  if (!gbid && !olcid && metadata.coverUrl) {
-    const gbMatch = metadata.coverUrl.match(/books\.google\.[^/]+\/books\/content\?id=([^&]+)/);
-    const olMatch = metadata.coverUrl.match(/covers\.openlibrary\.org\/b\/id\/(\d+)/);
-    if (gbMatch) gbid = gbMatch[1];
-    else if (olMatch) olcid = olMatch[1];
-    else if (Buffer.byteLength(`m_cover${metadata.coverUrl}`, 'utf8') <= 124) coverRaw = metadata.coverUrl;
+/**
+ * Chooses how to store a cover: compact Google Books / Open Library ids are
+ * preferred; a raw URL is kept only for manually entered covers that fit.
+ */
+function coverStorage(metadata: BookMetadata): { m_gbid?: string; m_olcid?: string; m_cover?: string } {
+  if (metadata.googleBooksId || metadata.openLibraryCoverId || !metadata.coverUrl) {
+    return { m_gbid: metadata.googleBooksId, m_olcid: metadata.openLibraryCoverId };
   }
+  const url = metadata.coverUrl;
+  const googleBooksId = url.match(/books\.google\.[^/]+\/books\/content\?id=([^&]+)/)?.[1];
+  if (googleBooksId) return { m_gbid: googleBooksId };
+  const openLibraryId = url.match(/covers\.openlibrary\.org\/b\/id\/(\d+)/)?.[1];
+  if (openLibraryId) return { m_olcid: openLibraryId };
+  return Buffer.byteLength(`m_cover${url}`, 'utf8') <= 124 ? { m_cover: url } : {};
+}
 
-  // Build the full m_* map. Empty/undefined values become null so Drive DELETES
-  // that property — this lets manual edits clear a field rather than leave a stale value.
+/**
+ * The full m_* property map for a book. Empty values become null so Drive
+ * DELETES that property, letting a manual edit clear a field rather than
+ * leave a stale value. Reading-progress keys are never included.
+ */
+function metadataToAppProperties(metadata: BookMetadata): Record<string, string | null> {
+  const cover = coverStorage(metadata);
   const raw: Record<string, string | undefined> = {
     m_title: metadata.title,
     m_authors: metadata.authors?.join('; '),
@@ -1127,22 +1140,17 @@ export async function updateBookMetadata(
     m_pages: metadata.pageCount !== undefined ? String(metadata.pageCount) : undefined,
     m_lang: metadata.language,
     m_isbn: metadata.isbn,
-    m_gbid: gbid,
-    m_olcid: olcid,
-    m_cover: coverRaw,
+    m_gbid: cover.m_gbid,
+    m_olcid: cover.m_olcid,
+    m_cover: cover.m_cover,
     m_src: metadata.metadataSource ?? 'manual',
   };
-
-  const appProperties: Record<string, string | null> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    appProperties[key] = value === undefined || value === '' ? null : truncateForProperty(key, value);
-  }
-
-  await drive.files.update({
-    fileId,
-    // appProperties accepts null values to delete keys; the typed client omits null from its type.
-    requestBody: { appProperties: appProperties as unknown as Record<string, string> },
-  });
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => [
+      key,
+      value === undefined || value === '' ? null : truncateForProperty(key, value),
+    ])
+  );
 }
 
 /**
