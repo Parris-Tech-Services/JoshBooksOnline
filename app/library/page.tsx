@@ -16,6 +16,10 @@ import { findYoutubeMatches } from '@/lib/youtubeCatalog';
 import { useCollections } from '@/lib/useCollections';
 import { useYoutubeCatalog } from '@/lib/useYoutubeCatalog';
 import { useSmartFolders, matchesSmartFolder } from '@/lib/useSmartFolders';
+import {
+  createUserdataBackup,
+  restoreUserdataBackup,
+} from '@/lib/userdataBackup';
 import CollectionsManager from '@/components/CollectionsManager';
 import type { BookEntry, BookMetadata, AudiobookEntry, Audiobook, LibrarySource, MovieEntry } from '@/types/books';
 
@@ -1615,28 +1619,6 @@ export default function LibraryPage() {
     return items;
   }, [books, audiobooks, movieProgress, hiddenIds]);
 
-  const STATIC_KEYS = [
-    'joshbooks-meta',
-    'joshbooks-hidden',
-    'joshbooks-links',
-    'joshbooks-audiogroups',
-    'joshbooks-youtube-links',
-    'joshbooks-youtube-removed',
-    'joshbooks-youtube-edits',
-    'joshbooks-youtube-custom',
-    'joshbooks-view',
-    'joshbooks-sort-field',
-    'joshbooks-sort-dir',
-    'joshbooks-columns',
-    'joshbooks-reader-theme',
-    'joshbooks-tab',
-    'joshbooks-audio-sort-field',
-    'joshbooks-audio-sort-dir',
-    'joshbooks-audio-speed',
-    'bookshelf-reader-fontSize',
-    'joshbooks-smart-folders',
-    'joshbooks-pdf-zoom',
-  ];
 
   // Press "/" to focus search; Escape to clear; 1/2/3 to switch tabs
   useEffect(() => {
@@ -1662,30 +1644,16 @@ export default function LibraryPage() {
 
   const exportUserdata = () => {
     try {
-      const data: Record<string, unknown> = { _version: 1, _exported: new Date().toISOString() };
-      for (const key of STATIC_KEYS) {
-        const val = window.localStorage.getItem(key);
-        if (val === null) continue;
-        try { data[key] = JSON.parse(val); } catch { data[key] = val; }
-      }
-      // Prefix-keyed movie progress
-      const movieProgressEntries: Record<string, number> = {};
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const k = window.localStorage.key(i);
-        if (k?.startsWith('joshbooks-watch-progress:')) {
-          movieProgressEntries[k] = parseInt(window.localStorage.getItem(k) ?? '0', 10);
-        }
-      }
-      if (Object.keys(movieProgressEntries).length) data['_watch_progress'] = movieProgressEntries;
+      const data = createUserdataBackup(window.localStorage);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `joshbooks-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `joshbooks-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.click();
       URL.revokeObjectURL(url);
     } catch {
-      // ignore
+      alert('Failed to export your library settings.');
     }
   };
 
@@ -1694,29 +1662,22 @@ export default function LibraryPage() {
 
   const handleImportUserdata = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result as string) as Record<string, unknown>;
-        for (const key of STATIC_KEYS) {
-          if (!(key in data)) continue;
-          const val = data[key];
-          window.localStorage.setItem(key, typeof val === 'string' ? val : JSON.stringify(val));
-        }
-        const watchProgress = data['_watch_progress'] as Record<string, number> | undefined;
-        if (watchProgress && typeof watchProgress === 'object') {
-          for (const [k, v] of Object.entries(watchProgress)) {
-            window.localStorage.setItem(k, String(v));
-          }
-        }
+        restoreUserdataBackup(window.localStorage, String(reader.result ?? ''));
         window.location.reload();
       } catch {
         alert('Failed to import — the file may be invalid or corrupted.');
       }
     };
+    reader.onerror = () => {
+      alert('Failed to read the backup file.');
+    };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
   return (
