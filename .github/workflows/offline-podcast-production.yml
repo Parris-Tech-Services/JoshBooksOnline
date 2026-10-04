@@ -1,13 +1,6 @@
 name: JoshBooks production offline podcasts
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'public/book-podcast-player.js'
-      - 'public/podcast-sw.js'
-      - 'tools/offline-podcast-production.mjs'
-      - '.github/workflows/offline-podcast-production.yml'
 permissions:
   contents: read
 concurrency:
@@ -69,3 +62,4 @@ jobs:
         with:
           name: joshbooks-offline-evidence-${{ strategy.job-index }}
           path: offline-evidence/
+          retention-days: 1
