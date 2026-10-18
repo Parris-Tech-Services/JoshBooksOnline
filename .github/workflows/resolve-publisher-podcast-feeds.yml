@@ -1,9 +1,7 @@
 name: Resolve JoshBooks publisher feeds
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/resolve-publisher-podcast-feeds.yml'
+  workflow_dispatch:
+
 permissions:
   contents: write
 jobs:
