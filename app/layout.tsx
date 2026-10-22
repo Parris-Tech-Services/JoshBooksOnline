@@ -48,6 +48,7 @@ export default function RootLayout({
           data-website-id="__UMAMI_WEBSITE_ID__"
           data-do-not-track="true"
           data-performance="true"
+          data-exclude-hash="true"
           data-domains="josh-books-online.vercel.app"
           data-tag="JoshBooksOnline"
         />
