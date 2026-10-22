@@ -42,6 +42,15 @@ export default function RootLayout({
           src="/book-podcast-player.js?v=3"
           strategy="afterInteractive"
         />
+        <Script
+          src="https://cloud.umami.is/script.js"
+          strategy="afterInteractive"
+          data-website-id="__UMAMI_WEBSITE_ID__"
+          data-do-not-track="true"
+          data-performance="true"
+          data-domains="josh-books-online.vercel.app"
+          data-tag="JoshBooksOnline"
+        />
       </body>
     </html>
   );
