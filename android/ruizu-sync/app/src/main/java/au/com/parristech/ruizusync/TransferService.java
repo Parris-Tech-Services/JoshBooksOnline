@@ -1,84 +1,219 @@
 package au.com.parristech.ruizusync;
 
-import android.app.*;
-import android.content.*;
-import android.os.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.*;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+import android.os.IBinder;
 
-/** One serial queue for all destinations prevents duplicate races. No background restarts without sources. */
-public final class TransferService extends Service {
-    private static final String CHANNEL = "transfers";
-    private static final AtomicBoolean CANCELLED = new AtomicBoolean();
-    private static final ConcurrentHashMap<Integer, Runnable> TASKS = new ConcurrentHashMap<>();
-    private static final AtomicInteger NEXT = new AtomicInteger();
-    private static final AtomicInteger PENDING = new AtomicInteger();
-    private static volatile String status = "Ready. Existing RUIZU files are preserved.";
-    private volatile int latestStartId;
-    private PowerManager.WakeLock wakeLock;
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    public static boolean cancelled() { return CANCELLED.get(); }
-    public static String status() { return status; }
-    public static void report(String value) { status = value; }
-    public static void cancel() { CANCELLED.set(true); report("Cancelling; waiting for I/O and cleanup..."); }
-    public static void submit(Context context, Runnable task) { submit(context, task, java.util.Collections.emptyList()); }
-    public static synchronized void submit(Context context, Runnable task, java.util.List<android.net.Uri> sources) {
-        if (PENDING.get() >= 250) { report("Queue full; wait for transfers to finish"); return; }
-        if (PENDING.getAndIncrement() == 0) CANCELLED.set(false);
-        int id = NEXT.incrementAndGet();
-        TASKS.put(id, task);
+import au.com.parristech.ruizusync.core.ByteFormat;
+import au.com.parristech.ruizusync.ui.MainActivity;
+
+/**
+ * Keeps the transfer alive in the background and mirrors its progress into a notification with a
+ * Cancel action. The work itself lives in {@link TransferManager}; this service only keeps the
+ * process in the foreground while the transfer runs.
+ */
+public final class TransferService extends Service implements TransferManager.Listener {
+
+    public static final String ACTION_START = "au.com.parristech.ruizusync.action.START";
+    public static final String ACTION_CANCEL = "au.com.parristech.ruizusync.action.CANCEL";
+
+    private static final String CHANNEL_ID = "transfer";
+    private static final int NOTIFICATION_ID = 4711;
+    private static final long NOTIFICATION_INTERVAL_MS = 500L;
+
+    private TransferManager manager;
+    private NotificationManager notificationManager;
+    private long lastNotificationUpdate;
+
+    public static void start(Context context) { start(context, java.util.Collections.emptyList()); }
+    public static void start(Context context, java.util.List<au.com.parristech.ruizusync.model.SourceItem> sources) {
+        Intent intent = new Intent(context, TransferService.class).setAction(ACTION_START);
+        android.content.ClipData grants = null;
+        for (au.com.parristech.ruizusync.model.SourceItem source : sources) {
+            if (!"content".equals(source.uri.getScheme())) continue;
+            if (grants == null) grants = android.content.ClipData.newRawUri("Audio", source.uri);
+            else grants.addItem(new android.content.ClipData.Item(source.uri));
+        }
+        if (grants != null) { intent.setClipData(grants); intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         try {
-            Intent intent = new Intent(context, TransferService.class).putExtra("task", id);
-            if (!sources.isEmpty()) {
-                ClipData clips = ClipData.newRawUri("Shared audio", sources.get(0));
-                for (int i = 1; i < sources.size(); i++) clips.addItem(new ClipData.Item(sources.get(i)));
-                intent.setClipData(clips);
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
             }
-            context.startForegroundService(intent);
-        }
-        catch (RuntimeException error) {
-            TASKS.remove(id); PENDING.decrementAndGet();
-            report("Could not start transfer; keep the app open and try again");
+        } catch (Throwable ignored) {
+            // Even without the service the transfer keeps running while the app is alive.
         }
     }
-    @Override public void onCreate() {
+
+    @Override
+    public void onCreate() {
         super.onCreate();
-        wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RUIZUSync:transfer");
-        wakeLock.acquire(6 * 60 * 60 * 1000L);
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        manager.createNotificationChannel(new NotificationChannel(CHANNEL, "Audio transfers", NotificationManager.IMPORTANCE_LOW));
+        notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        ensureChannel();
+        manager = TransferManager.get(this);
+        manager.addListener(this);
     }
-    private void showNotification() {
-        Intent cancel = new Intent(this, TransferService.class).setAction("cancel");
-        PendingIntent action = PendingIntent.getService(this, 0, cancel, PendingIntent.FLAG_IMMUTABLE);
-        PendingIntent open = PendingIntent.getActivity(this, 1, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-        startForeground(1, new Notification.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("RUIZU Sync")
-            .setContentText("Transferring and verifying audio. Tap to view progress.")
-            .setContentIntent(open).setOngoing(true).addAction(android.R.drawable.ic_delete, "Cancel", action).build());
-    }
-    @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        latestStartId = startId;
-        showNotification();
-        if (intent != null && "cancel".equals(intent.getAction())) { cancel(); if (PENDING.get() == 0) stopSelf(); return START_NOT_STICKY; }
-        Runnable task = intent == null ? null : TASKS.remove(intent.getIntExtra("task", -1));
-        if (task == null) { if (PENDING.get() == 0) stopSelf(); return START_NOT_STICKY; }
-        worker.execute(() -> {
-            try { if (!cancelled()) task.run(); }
-            catch (RuntimeException error) { report("Transfer failed; reconnect and retry"); }
-            finally {
-                synchronized (TransferService.class) {
-                    if (PENDING.decrementAndGet() == 0) {
-                        if (cancelled()) report("Cancelled. Reconnect USB and reselect files to retry safely.");
-                        stopSelfResult(latestStartId);
-                    }
-                }
-            }
-        });
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent == null ? null : intent.getAction();
+        if (ACTION_CANCEL.equals(action)) {
+            manager.cancel();
+            return START_NOT_STICKY;
+        }
+        startForeground(NOTIFICATION_ID, buildNotification(manager.snapshot()));
+        if (!manager.isRunning()) {
+            stopForegroundCompat();
+            stopSelf();
+        }
         return START_NOT_STICKY;
     }
-    @Override public void onTimeout(int startId, int fgsType) { cancel(); stopSelf(); }
-    @Override public void onDestroy() { worker.shutdown(); if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); super.onDestroy(); }
-    @Override public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onTransferState(TransferManager.Snapshot snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        if (snapshot.isFinished()) {
+            postResultNotification(snapshot);
+            stopForegroundCompat();
+            stopSelf();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastNotificationUpdate < NOTIFICATION_INTERVAL_MS) {
+            return;
+        }
+        lastNotificationUpdate = now;
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification(snapshot));
+        } catch (Throwable ignored) {
+            // Keep transferring regardless.
+        }
+    }
+
+    @Override public void onTimeout(int startId, int fgsType) { manager.cancel(); stopSelf(); }
+
+    @Override
+    public void onDestroy() {
+        manager.removeListener(this);
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    private void postResultNotification(TransferManager.Snapshot snapshot) {
+        if (notificationManager == null) {
+            return;
+        }
+        try {
+            Notification.Builder builder = newNotificationBuilder()
+                    .setSmallIcon(R.drawable.ic_stat_sync)
+                    .setContentTitle(TransferManager.PHASE_ERROR.equals(snapshot.phase) ? "RUIZU Sync stopped" : "RUIZU Sync finished")
+                    .setContentText(snapshot.status == null ? "Transfer finished" : snapshot.status)
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    .setLocalOnly(true)
+                    .setContentIntent(activityIntent());
+            notificationManager.notify(NOTIFICATION_ID, builder.build());
+        } catch (Throwable ignored) {
+            // Notifications are only a convenience here.
+        }
+    }
+
+    private Notification buildNotification(TransferManager.Snapshot snapshot) {
+        Notification.Builder builder = newNotificationBuilder()
+                .setSmallIcon(R.drawable.ic_stat_sync)
+                .setContentTitle("RUIZU Sync")
+                .setContentText(notificationText(snapshot))
+                .setOngoing(snapshot.running)
+                .setOnlyAlertOnce(true)
+                .setLocalOnly(true)
+                .setContentIntent(activityIntent());
+
+        if (snapshot.currentTotal > 0 && snapshot.running) {
+            int percent = (int) Math.round(snapshot.currentFraction * 100);
+            builder.setProgress(100, Math.max(0, Math.min(100, percent)), false);
+        } else if (snapshot.running) {
+            builder.setProgress(0, 0, true);
+        } else {
+            builder.setProgress(0, 0, false);
+        }
+        if (snapshot.running) {
+            builder.addAction(new Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelIntent()).build());
+        }
+        return builder.build();
+    }
+
+    private String notificationText(TransferManager.Snapshot snapshot) {
+        if (TransferManager.PHASE_SCANNING.equals(snapshot.phase)) {
+            return "Checking the player folder…";
+        }
+        if (snapshot.running) {
+            int percent = (int) Math.round(snapshot.fraction * 100);
+            return snapshot.completedFiles + "/" + snapshot.totalFiles + " files · " + percent + "% · "
+                    + ByteFormat.speed(snapshot.bytesPerSecond);
+        }
+        return snapshot.status == null ? "Transfer finished" : snapshot.status;
+    }
+
+    private Notification.Builder newNotificationBuilder() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            return new Notification.Builder(this, CHANNEL_ID);
+        }
+        return new Notification.Builder(this);
+    }
+
+    private PendingIntent activityIntent() {
+        Intent intent = new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return PendingIntent.getActivity(this, 0, intent, pendingIntentFlags());
+    }
+
+    private PendingIntent cancelIntent() {
+        Intent intent = new Intent(this, TransferService.class).setAction(ACTION_CANCEL);
+        return PendingIntent.getService(this, 1, intent, pendingIntentFlags());
+    }
+
+    private static int pendingIntentFlags() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
+        }
+        return PendingIntent.FLAG_UPDATE_CURRENT;
+    }
+
+    private void ensureChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || notificationManager == null) {
+            return;
+        }
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Transfers",
+                NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription("Music transfer progress to the RUIZU player");
+        channel.setShowBadge(false);
+        notificationManager.createNotificationChannel(channel);
+    }
+
+    private void stopForegroundCompat() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Throwable ignored) {
+            // Nothing to do.
+        }
+    }
 }

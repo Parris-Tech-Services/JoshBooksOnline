@@ -13,17 +13,28 @@ public final class SafTransfer {
     private final ContentResolver resolver;
     private final SharedPreferences journal;
     private final BooleanSupplier cancelled;
+    private final String directoryId;
+    private final boolean skipIdentical;
     public SafTransfer(Context context, BooleanSupplier cancelled) {
+        this(context, cancelled, null, true);
+    }
+    public SafTransfer(Context context, BooleanSupplier cancelled, String directoryId, boolean skipIdentical) {
+        this.directoryId = directoryId;
+        this.skipIdentical = skipIdentical;
         resolver = context.getContentResolver();
         journal = context.getSharedPreferences("ruizu-pending", Context.MODE_PRIVATE);
         this.cancelled = cancelled;
     }
+    private String documentId(Uri tree) {
+        return directoryId == null ? DocumentsContract.getTreeDocumentId(tree) : directoryId;
+    }
+    private String journalKey(Uri tree) { return directoryId == null ? tree.toString() : tree + "|" + directoryId; }
     private Uri parent(Uri tree) {
-        return DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        return DocumentsContract.buildDocumentUriUsingTree(tree, documentId(tree));
     }
     private Map<String, Uri> children(Uri tree) throws IOException {
         Map<String, Uri> found = new LinkedHashMap<>();
-        Uri list = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        Uri list = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId(tree));
         try (Cursor c = resolver.query(list, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
             if (c == null) throw new IOException("USB folder unavailable; reconnect and choose it again");
@@ -33,17 +44,17 @@ public final class SafTransfer {
         return found;
     }
     private void recover(Uri tree) throws IOException {
-        String old = journal.getString(tree.toString(), null);
+        String old = journal.getString(journalKey(tree), null);
         if (old == null) return;
         Uri pending = Uri.parse(old);
         // The journal contains only documents returned by createDocument for this tree.
-        String ownedName = journal.getString(tree + ":name", "");
+        String ownedName = journal.getString(journalKey(tree) + ":name", "");
         Map<String, Uri> files = children(tree);
         // A provider may keep the same document URI after rename. Never delete a published file.
         if (!ownedName.isEmpty() && pending.equals(files.get(ownedName))
                 && !DocumentsContract.deleteDocument(resolver, pending))
             throw new IOException("Could not remove previous incomplete transfer; reconnect USB and retry");
-        journal.edit().remove(tree.toString()).remove(tree + ":name").commit();
+        journal.edit().remove(journalKey(tree)).remove(journalKey(tree) + ":name").commit();
     }
     public boolean transfer(InputStream source, Uri tree, String rawName, long size,
                             VerifiedCopy.Progress progress) throws Exception {
@@ -61,7 +72,7 @@ public final class SafTransfer {
         String temporaryName = ".ruizu-" + UUID.randomUUID() + ".part";
         Uri temporary = DocumentsContract.createDocument(resolver, parent(tree), "application/octet-stream", temporaryName);
         if (temporary == null) throw new IOException("USB storage is read-only or full");
-        if (!journal.edit().putString(tree.toString(), temporary.toString()).putString(tree + ":name", temporaryName).commit()) {
+        if (!journal.edit().putString(journalKey(tree), temporary.toString()).putString(journalKey(tree) + ":name", temporaryName).commit()) {
             DocumentsContract.deleteDocument(resolver, temporary);
             throw new IOException("Could not record recovery information");
         }
@@ -78,7 +89,7 @@ public final class SafTransfer {
                 VerifiedCopy.verify(hash, check, cancelled);
             }
             for (Map.Entry<String, Uri> entry : existing.entrySet()) {
-                if (!TransferUtils.isConflictName(name, entry.getKey())) continue;
+                if (!skipIdentical || !TransferUtils.isConflictName(name, entry.getKey())) continue;
                 try (InputStream check = resolver.openInputStream(entry.getValue())) {
                     if (check != null && Arrays.equals(hash, VerifiedCopy.digest(check, cancelled))) return false;
                 }
@@ -87,7 +98,7 @@ public final class SafTransfer {
             if (DocumentsContract.renameDocument(resolver, temporary, free) == null)
                 throw new IOException("USB provider cannot finalise this file; transfer not completed");
             published = true;
-            journal.edit().remove(tree.toString()).remove(tree + ":name").commit();
+            journal.edit().remove(journalKey(tree)).remove(journalKey(tree) + ":name").commit();
             return true;
         } catch (Exception error) {
             failure = error;
@@ -96,7 +107,7 @@ public final class SafTransfer {
             if (!published) {
                 try {
                     if (!DocumentsContract.deleteDocument(resolver, temporary)) throw new IOException("Incomplete file cleanup failed");
-                    journal.edit().remove(tree.toString()).remove(tree + ":name").commit();
+                    journal.edit().remove(journalKey(tree)).remove(journalKey(tree) + ":name").commit();
                 } catch (Exception cleanup) {
                     if (failure != null) failure.addSuppressed(cleanup);
                     else throw new IOException("Reconnect USB and retry to clean up incomplete output", cleanup);

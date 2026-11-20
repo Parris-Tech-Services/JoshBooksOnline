@@ -1,5 +1,6 @@
 package au.com.parristech.ruizusync;
 import android.app.Activity;
+import au.com.parristech.ruizusync.ui.MainActivity;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
@@ -26,8 +27,8 @@ public final class MainActivityTest {
         Activity activity=getInstrumentation().startActivitySync(intent);
         getInstrumentation().waitForIdleSync();
         getInstrumentation().runOnMainSync(()-> {
-            assertTrue(contains(activity.getWindow().getDecorView(),"Choose RUIZU Music folder"));
-            assertTrue(contains(activity.getWindow().getDecorView(),"Cancel transfers"));
+            assertTrue(contains(activity.getWindow().getDecorView(),"Choose player folder"));
+            assertTrue(contains(activity.getWindow().getDecorView(),"Start transfer"));
             activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         });
         getInstrumentation().waitForIdleSync();

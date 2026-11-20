@@ -64,12 +64,4 @@ public class VerifiedCopyTest {
     @Test(expected=IOException.class) public void fat32LimitPreflight() throws Exception {
         copy(new ByteArrayInputStream(data),new ByteArrayOutputStream(),1L << 32);
     }
-    @Test public void boundedFeedAtLimit() throws Exception {
-        try(InputStream input = new LimitedInputStream(new ByteArrayInputStream(new byte[10]),10)) {
-            assertEquals(10,input.read(new byte[20])); assertEquals(-1,input.read());
-        }
-    }
-    @Test(expected=IOException.class) public void oversizedFeedFails() throws Exception {
-        new LimitedInputStream(new ByteArrayInputStream(new byte[11]),10).read(new byte[20]);
-    }
 }

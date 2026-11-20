@@ -6,11 +6,7 @@ public final class TransferUtils {
     private TransferUtils() {}
 
     public static boolean isSupportedAudio(String fileName) {
-        if (fileName == null) return false;
-        String s = fileName.toLowerCase(Locale.ROOT);
-        return s.endsWith(".mp3") || s.endsWith(".m4a") || s.endsWith(".m4b")
-            || s.endsWith(".wav") || s.endsWith(".flac") || s.endsWith(".aac")
-            || s.endsWith(".ogg") || s.endsWith(".wma");
+        return au.com.parristech.ruizusync.core.MediaTypes.isSupported(fileName);
     }
 
     public static String safeName(String name) {

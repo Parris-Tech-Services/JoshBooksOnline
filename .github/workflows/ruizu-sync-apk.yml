@@ -34,6 +34,11 @@ jobs:
           key: ruizu-development-signing-v1
       - name: Unit tests, Android lint and debug APK
         run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Static APK verification
+        run: |
+          export PATH="$ANDROID_HOME/build-tools/35.0.0:$PATH"
+          cd android/ruizu-sync
+          bash tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
       - name: APK checksum and signing certificate
         run: |
           cd android/ruizu-sync/app/build/outputs/apk/debug
