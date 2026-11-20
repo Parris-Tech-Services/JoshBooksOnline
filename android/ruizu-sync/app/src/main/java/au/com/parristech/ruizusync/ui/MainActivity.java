@@ -60,6 +60,7 @@ import au.com.parristech.ruizusync.io.SourceRepo;
 import au.com.parristech.ruizusync.model.SourceItem;
 import au.com.parristech.ruizusync.net.FeedScanner;
 import au.com.parristech.ruizusync.net.RemoteAudio;
+import au.com.parristech.ruizusync.net.DownloadResumePolicy;
 import au.com.parristech.ruizusync.usb.UsbVolumes;
 
 import java.io.ByteArrayOutputStream;
@@ -1668,8 +1669,14 @@ public final class MainActivity extends Activity implements TransferManager.List
                         try {
                             String name = FileNameSanitizer.fileName(
                                     MediaTypes.normalizeAudioName(episode.title, episode.mimeType));
-                            File target = new File(cacheDir, (downloaded + 1) + "-" + name);
-                            RemoteAudio.downloadToFile(episode.audioUrl, target, null);
+                            // A stable, URL-specific name prevents future feed refreshes
+                            // from overwriting older cached episodes with the same title.
+                            String episodeKey = DownloadResumePolicy.key(episode.audioUrl)
+                                    .substring(0, 20);
+                            File target = new File(cacheDir, episodeKey + "-" + name);
+                            if (!target.isFile()) {
+                                RemoteAudio.downloadToFile(episode.audioUrl, target, null);
+                            }
                             added.add(new SourceItem(Uri.fromFile(target), target.getName(),
                                     target.length(), episode.mimeType, "Podcasts",
                                     Collections.<String>emptyList(), null));
