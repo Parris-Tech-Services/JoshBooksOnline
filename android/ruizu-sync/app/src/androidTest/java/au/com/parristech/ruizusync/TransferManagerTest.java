@@ -24,7 +24,7 @@ public final class TransferManagerTest {
         Uri tree=DocumentsContract.buildTreeDocumentUri(FakeUsbProvider.AUTHORITY,"root");
         TransferManager manager=TransferManager.get(context);
         CountDownLatch finished=new CountDownLatch(1);
-        TransferManager.Listener listener=snapshot->{if(snapshot.isFinished())finished.countDown();};
+        TransferManager.Listener listener=snapshot->{if(snapshot.isFinished() && !snapshot.running)finished.countDown();};
         manager.addListener(listener);
         try {
             manager.start(new TransferManager.Request(Collections.singletonList(item),tree,FolderPlanner.OrganiseMode.FLAT,DuplicateMode.SKIP_EXACT));

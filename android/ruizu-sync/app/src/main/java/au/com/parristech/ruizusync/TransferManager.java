@@ -125,7 +125,7 @@ public final class TransferManager {
         }
 
         public boolean isFinished() {
-            return !PHASE_IDLE.equals(phase) && !PHASE_SCANNING.equals(phase) && !PHASE_RUNNING.equals(phase);
+            return !running && !PHASE_IDLE.equals(phase) && !PHASE_SCANNING.equals(phase) && !PHASE_RUNNING.equals(phase);
         }
     }
 

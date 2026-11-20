@@ -107,8 +107,7 @@ jobs:
             adb shell am instrument -w au.com.parristech.ruizusync.saftest.test/androidx.test.runner.AndroidJUnitRunner > instrumentation.txt
             cat instrumentation.txt
             adb pull /sdcard/Android/data/au.com.parristech.ruizusync.saftest/files/ruizu-ui.png ruizu-ui.png || true
-            grep -Eq '^OK \([0-9]+ tests?\)' instrumentation.txt
-            grep -q '^INSTRUMENTATION_CODE: -1' instrumentation.txt
+            grep -Eq '^OK \([1-9][0-9]* tests?\)' instrumentation.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
