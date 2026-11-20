@@ -59,10 +59,11 @@ public final class LibraryComparison {
         public final int possible;
         public final int missing;
         public final Map<String, Integer> playerFolders;
+        public final List<String> playerPaths;
 
         Result(List<Match> matches, int playerAudioFiles, int playerMusicFiles,
                int playerPodcastFiles, int ignoredSystemFiles, int likelyPresent,
-               int possible, int missing, Map<String, Integer> playerFolders) {
+               int possible, int missing, Map<String, Integer> playerFolders, List<String> playerPaths) {
             this.matches = Collections.unmodifiableList(matches);
             this.playerAudioFiles = playerAudioFiles;
             this.playerMusicFiles = playerMusicFiles;
@@ -72,6 +73,7 @@ public final class LibraryComparison {
             this.possible = possible;
             this.missing = missing;
             this.playerFolders = Collections.unmodifiableMap(playerFolders);
+            this.playerPaths = Collections.unmodifiableList(playerPaths);
         }
 
         public String report(int maxRows) {
@@ -89,6 +91,15 @@ public final class LibraryComparison {
                     break;
                 }
                 out.append(folder.getKey()).append(": ").append(folder.getValue()).append(" audio\n");
+            }
+            out.append("\nON THE PLAYER (file paths)\n");
+            int shownPlayer = 0;
+            for (String path : playerPaths) {
+                if (shownPlayer++ >= maxRows) {
+                    out.append("… ").append(playerPaths.size() - maxRows).append(" more player audio files\n");
+                    break;
+                }
+                out.append(path).append('\n');
             }
             if (matches.isEmpty()) {
                 out.append("\nTo find missing songs, albums, artists or podcasts, first add files ")
@@ -137,11 +148,13 @@ public final class LibraryComparison {
         Map<String, List<DestEntry>> stems = new HashMap<>();
         Map<String, Integer> folders = new LinkedHashMap<>();
         int music = 0, podcasts = 0, ignored = 0;
+        List<String> playerPaths = new ArrayList<>();
         if (playerFiles != null) for (DestEntry file : playerFiles) {
             if (!isAudio(file.name)) {
                 ignored++;
                 continue;
             }
+            playerPaths.add(file.relPath);
             String folder = firstPathSegment(file.relPath);
             if (folder.isEmpty()) folder = "(player root)";
             folders.put(folder, folders.containsKey(folder) ? folders.get(folder) + 1 : 1);
@@ -177,7 +190,7 @@ public final class LibraryComparison {
             }
         }
         return new Result(matches, music + podcasts, music, podcasts, ignored,
-                present, possible, missing, folders);
+                present, possible, missing, folders, playerPaths);
     }
 
     private static void put(Map<String, List<DestEntry>> map, String key, DestEntry file) {
