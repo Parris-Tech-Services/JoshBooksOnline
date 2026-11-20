@@ -158,64 +158,112 @@ public final class RemoteAudio {
     }
 
     /**
-     * Downloads an audio file to cache with HTTP Range resume: an interrupted download continues
-     * from the bytes already on disk. Returns the number of bytes in the finished file.
+     * Downloads a new episode to a private cache. A partial file is only resumed with a persisted
+     * matching URL fingerprint, a strong HTTP validator and a correct 206 Content-Range. When the
+     * server changes the file or does not honour Range, we safely download again from byte zero.
+     * Existing completed episode files are never overwritten.
      */
     public static long downloadToFile(String url, java.io.File target, DownloadProgress progress)
             throws IOException {
+        if (target.exists()) {
+            throw new IOException("Episode cache file already exists; choose a new destination");
+        }
         java.io.File part = new java.io.File(target.getPath() + ".part");
+        java.io.File meta = new java.io.File(target.getPath() + ".part.meta");
         long existing = part.isFile() ? part.length() : 0L;
-        HttpURLConnection connection = connect(new URL(url), "GET",
-                existing > 0 ? "bytes=" + existing + "-" : null);
-        try {
-            int code = connection.getResponseCode();
-            boolean append = code == 206 && existing > 0;
-            if (code != 200 && code != 206) {
-                throw new IOException("Download failed with HTTP " + code);
-            }
-            String mime = normalizeMime(connection.getContentType());
-            if (!isAudioContentType(mime)) {
-                throw new IOException("The link did not return an audio file ("
-                        + (mime.isEmpty() ? "unknown content type" : mime) + ")");
-            }
-            long total;
-            if (append) {
-                long tail = parseContentRange(connection.getHeaderField("Content-Range"));
-                total = tail > 0 ? tail : existing + connection.getContentLengthLong();
-            } else {
-                existing = 0;
-                total = connection.getContentLengthLong();
-            }
-            if (total > MAX_BYTES) {
-                throw new IOException("File exceeds the 2 GB transfer limit");
-            }
-            long written = existing;
-            try (InputStream in = connection.getInputStream();
-                 java.io.FileOutputStream out = new java.io.FileOutputStream(part, append)) {
-                byte[] buffer = new byte[64 * 1024];
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    written += read;
-                    if (written > MAX_BYTES) {
-                        throw new IOException("File exceeds the 2 GB transfer limit");
+        DownloadResumePolicy.State previous = DownloadResumePolicy.load(meta);
+        boolean resume = DownloadResumePolicy.canResume(previous, url, existing);
+        URL sourceUrl = new URL(url);
+
+        // At most two requests: a conditional Range attempt, then one safe full restart.
+        for (int attempt = 0; attempt < 2; attempt++) {
+            HttpURLConnection connection = connect(sourceUrl, "GET",
+                    resume ? "bytes=" + existing + "-" : null,
+                    resume ? previous.validator : null);
+            try {
+                int status = connection.getResponseCode();
+                boolean append = false;
+                long total;
+                if (status == 206) {
+                    DownloadResumePolicy.Range range = DownloadResumePolicy.parseRange(
+                            connection.getHeaderField("Content-Range"), MAX_BYTES);
+                    if (!resume || !DownloadResumePolicy.validResumeRange(
+                            range, existing, connection.getContentLengthLong())
+                            || !DownloadResumePolicy.sameEntity(previous,
+                                connection.getHeaderField("ETag"),
+                                connection.getHeaderField("Last-Modified"))) {
+                        if (resume) {
+                            resume = false;
+                            continue; // Never concatenate different or unproven entities.
+                        }
+                        throw new IOException("Server returned an unexpected partial audio response");
                     }
-                    out.write(buffer, 0, read);
-                    if (progress != null) {
-                        progress.onProgress(written, total);
+                    append = true;
+                    total = range.total;
+                } else if (status == 200) {
+                    total = connection.getContentLengthLong();
+                } else if (status == 416 && resume) {
+                    // An older .part may already contain all bytes; request a fresh full copy.
+                    resume = false;
+                    continue;
+                } else {
+                    throw new IOException("Download failed with HTTP " + status);
+                }
+                String mime = normalizeMime(connection.getContentType());
+                if (!isAudioContentType(mime)) {
+                    throw new IOException("The link did not return an audio file ("
+                            + (mime.isEmpty() ? "unknown content type" : mime) + ")");
+                }
+                if (total > MAX_BYTES) {
+                    throw new IOException("File exceeds the 2 GB transfer limit");
+                }
+
+                if (!append) {
+                    // Persist identity before the first byte so a process death cannot create an
+                    // unlabelled .part that gets appended to another episode on the next run.
+                    DownloadResumePolicy.State latest = DownloadResumePolicy.fromHeaders(
+                            url, connection.getHeaderField("ETag"),
+                            connection.getHeaderField("Last-Modified"));
+                    if (latest != null) {
+                        DownloadResumePolicy.save(meta, latest);
+                    } else if (meta.exists() && !meta.delete()) {
+                        throw new IOException("Cannot remove stale download resume metadata");
                     }
                 }
-                out.getFD().sync();
+
+                long written = append ? existing : 0L;
+                try (InputStream in = connection.getInputStream();
+                     java.io.FileOutputStream out = new java.io.FileOutputStream(part, append)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        written += read;
+                        if (written > MAX_BYTES || (total >= 0 && written > total)) {
+                            throw new IOException("Audio download exceeded its declared size");
+                        }
+                        out.write(buffer, 0, read);
+                        if (progress != null) {
+                            progress.onProgress(written, total);
+                        }
+                    }
+                    out.getFD().sync();
+                }
+                if (total >= 0 && written != total) {
+                    throw new IOException("Incomplete audio download: expected " + total
+                            + " bytes, received " + written + ". Resume remains available.");
+                }
+                if (target.exists() || !part.renameTo(target)) {
+                    throw new IOException("Cannot publish the completed episode without overwriting");
+                }
+                if (meta.exists()) {
+                    meta.delete(); // Successful copies no longer have resume state.
+                }
+                return written;
+            } finally {
+                connection.disconnect();
             }
-            if (target.exists() && !target.delete()) {
-                throw new IOException("Cannot replace " + target.getName());
-            }
-            if (!part.renameTo(target)) {
-                throw new IOException("Cannot finish writing " + target.getName());
-            }
-            return written;
-        } finally {
-            connection.disconnect();
         }
+        throw new IOException("Server did not provide a safe complete audio response");
     }
 
     public static String nameFromUrl(Uri uri) {
@@ -264,8 +312,7 @@ public final class RemoteAudio {
     private static Probe rangedProbe(Uri uri) {
         HttpURLConnection connection = null;
         try {
-            connection = connect(new URL(uri.toString()), "GET");
-            connection.setRequestProperty("Range", "bytes=0-0");
+            connection = connect(new URL(uri.toString()), "GET", "bytes=0-0");
             int code = connection.getResponseCode();
             if (code < 200 || code >= 300) {
                 return null;
@@ -302,6 +349,11 @@ public final class RemoteAudio {
     }
 
     private static HttpURLConnection connect(URL url, String method, String range) throws IOException {
+        return connect(url, method, range, null);
+    }
+
+    private static HttpURLConnection connect(URL url, String method, String range,
+                                             String ifRange) throws IOException {
         URL current = url;
         for (int attempt = 0; attempt <= MAX_REDIRECTS; attempt++) {
             String protocol = current.getProtocol();
@@ -316,6 +368,9 @@ public final class RemoteAudio {
             connection.setRequestProperty("User-Agent", USER_AGENT);
             if (range != null) {
                 connection.setRequestProperty("Range", range);
+            }
+            if (ifRange != null) {
+                connection.setRequestProperty("If-Range", ifRange);
             }
             int code = connection.getResponseCode();
             if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
