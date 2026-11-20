@@ -81,7 +81,7 @@ fi
 # ---------------------------------------------------------------------------------------
 report "badging"
 aapt2 dump badging "$APK" > "$WORK/badging.txt" 2>&1
-grep -E "^(package:|sdkVersion|targetSdkVersion|application-label|launchable-activity|uses-permission)" \
+grep -E "^(package:|sdkVersion|minSdkVersion|targetSdkVersion|application-label|launchable-activity|uses-permission)" \
   "$WORK/badging.txt" || fail "badging failed"
 grep -qF "package: name='au.com.parristech.ruizusync'" "$WORK/badging.txt" \
   && ok "package name correct" || fail "package name wrong"
@@ -99,9 +99,11 @@ grep -q 'INTERNET' "$WORK/manifest.txt" && ok "INTERNET permission" || fail "INT
 grep -q 'TransferService' "$WORK/manifest.txt" && ok "TransferService declared" || fail "TransferService missing"
 grep -q 'ui.MainActivity' "$WORK/manifest.txt" && ok "MainActivity declared" || fail "MainActivity missing"
 
-# minSdk: accept either badging or the manifest xmltree (AGP builds can split them).
+# minSdk: aapt2 35+ labels it minSdkVersion:'26', older tools sdkVersion:'26'; also accept
+# the manifest xmltree form (some builds omit it from badging entirely).
 if grep -qF "sdkVersion:'26'" "$WORK/badging.txt" \
-   || grep -qE 'minSdkVersion\(0x[0-9a-f]+\)=\(type 0x10\)0x1a' "$WORK/manifest.txt"; then
+   || grep -qF "minSdkVersion:'26'" "$WORK/badging.txt" \
+   || grep -qE 'android:minSdkVersion\(0x[0-9a-f]+\)=(26|\(type 0x10\)0x1a)' "$WORK/manifest.txt"; then
   ok "minSdk 26"
 else
   fail "unexpected minSdk"
