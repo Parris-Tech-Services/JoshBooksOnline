@@ -32,11 +32,10 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Unit tests (core logic, transfer pipeline, feed scanner, utils)
-        run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest
-
-      - name: Build debug APK
-        run: gradle --no-daemon -p android/ruizu-sync :app:assembleDebug
+      # One Gradle invocation: tests and APK share the same compilation, which is faster
+      # than two separate builds and still fails the gate when a test fails.
+      - name: Unit tests and debug APK
+        run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug
 
       - name: Static APK verification
         run: |
