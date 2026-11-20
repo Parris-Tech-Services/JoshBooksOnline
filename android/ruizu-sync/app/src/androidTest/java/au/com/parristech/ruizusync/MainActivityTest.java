@@ -23,21 +23,33 @@ public final class MainActivityTest {
         return false;
     }
     @Test public void testA55SizedUiAndRotation() throws Exception {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            try (InputStream grant = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                    getInstrumentation().getUiAutomation().executeShellCommand("pm grant "
+                    + getInstrumentation().getTargetContext().getPackageName() + " android.permission.POST_NOTIFICATIONS"))) {
+                while (grant.read() != -1) { /* Wait for the permission command to finish. */ }
+            }
+        }
         Intent intent=new Intent(getInstrumentation().getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         Activity activity=getInstrumentation().startActivitySync(intent);
         getInstrumentation().waitForIdleSync();
+        android.app.Instrumentation.ActivityMonitor monitor = getInstrumentation().addMonitor(MainActivity.class.getName(), null, false);
         getInstrumentation().runOnMainSync(()-> {
             assertTrue(contains(activity.getWindow().getDecorView(),"Choose player folder"));
             assertTrue(contains(activity.getWindow().getDecorView(),"Start transfer"));
             activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         });
+        Activity rotated = monitor.waitForActivityWithTimeout(5000);
+        getInstrumentation().removeMonitor(monitor);
+        assertNotNull("Activity should recreate on rotation", rotated);
         getInstrumentation().waitForIdleSync();
+        getInstrumentation().runOnMainSync(()->assertTrue(contains(rotated.getWindow().getDecorView(),"Start transfer")));
         Bitmap bitmap=getInstrumentation().getUiAutomation().takeScreenshot();
         assertNotNull(bitmap);
         File directory=getInstrumentation().getContext().getExternalFilesDir(null);
         try(FileOutputStream out=new FileOutputStream(new File(directory,"ruizu-ui.png"))) {
             bitmap.compress(Bitmap.CompressFormat.PNG,100,out);
         }
-        getInstrumentation().runOnMainSync(activity::finish);
+        getInstrumentation().runOnMainSync(rotated::finish);
     }
 }

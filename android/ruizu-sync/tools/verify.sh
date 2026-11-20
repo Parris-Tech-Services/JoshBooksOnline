@@ -6,7 +6,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APK="${1:-$ROOT/dist/RUIZU-Sync-1.0.0-debug.apk}"
+APK="${1:-$ROOT/dist/RUIZU-Sync-1.1.0-debug.apk}"
 WORK="$ROOT/.build/verify"
 FAILURES=0
 
@@ -41,7 +41,12 @@ for dex in "$WORK"/dex/classes*.dex; do
   head -c 4 "$dex" | grep -q 'dex' || fail "bad dex magic in $(basename "$dex")"
 done
 ok "dex magic valid"
-for cls in ui/MainActivity TransferService TransferManager net/RemoteAudio net/FeedScanner \
+if grep -aq 'FakeUsbProvider' "$WORK"/dex/classes*.dex; then
+  fail "test provider leaked into distributed APK"
+else
+  ok "test provider absent from distributed APK"
+fi
+for cls in ui/MainActivity TransferService TransferManager SafTransfer VerifiedCopy net/RemoteAudio net/FeedScanner \
            core/DuplicateMatcher core/FolderPlanner core/MediaTypes 'core/FolderPlanner$OrganiseMode'; do
   found=no
   for dex in "$WORK"/dex/classes*.dex; do

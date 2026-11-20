@@ -2,6 +2,6 @@
   <application>
     <provider android:name="au.com.parristech.ruizusync.FakeUsbProvider"
       android:authorities="au.com.parristech.ruizusync.test.usb" android:exported="true"
-      android:grantUriPermissions="true" />
+      android:permission="android.permission.MANAGE_DOCUMENTS" android:grantUriPermissions="true" />
   </application>
 </manifest>

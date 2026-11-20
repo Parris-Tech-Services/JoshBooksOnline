@@ -33,7 +33,7 @@ jobs:
           path: ~/.android/debug.keystore
           key: ruizu-development-signing-v1
       - name: Unit tests, Android lint and debug APK
-        run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+        run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleSafTestAndroidTest
       - name: Static APK verification
         run: |
           export PATH="$ANDROID_HOME/build-tools/35.0.0:$PATH"
@@ -88,8 +88,8 @@ jobs:
           script: |
             adb shell wm size 1080x2340
             adb shell wm density 450
-            android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:connectedDebugAndroidTest
-            adb pull /sdcard/Android/data/au.com.parristech.ruizusync.test/files/ruizu-ui.png ruizu-ui.png
+            android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:connectedSafTestAndroidTest
+            adb pull /sdcard/Android/data/au.com.parristech.ruizusync.saftest.test/files/ruizu-ui.png ruizu-ui.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:

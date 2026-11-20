@@ -37,12 +37,12 @@ JDK **17**, Android SDK platform **35**, build tools **35.0.0**, Gradle **8.9**,
 
 ```sh
 android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync \
-  :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+  :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleSafTestAndroidTest
 # With an Android emulator/device visible to adb:
-android/ruizu-sync/gradlew -p android/ruizu-sync :app:connectedDebugAndroidTest
+android/ruizu-sync/gradlew -p android/ruizu-sync :app:connectedSafTestAndroidTest
 ```
 
-CI uploads APK SHA-256, signing-certificate information, unit/lint reports, emulator reports and a UI screenshot. Emulator tests use Android 15/API 35, 1080×2340 at density 450 (A55-like viewport, not Samsung firmware). Test-only fake DocumentsProvider is packaged solely in the test APK; it is not shipped in the user APK. No physical RUIZU compatibility is implied by these tests.
+CI uploads APK SHA-256, signing-certificate information, unit/lint reports, emulator reports and a UI screenshot. Emulator tests use Android 15/API 35, 1080×2340 at density 450 (A55-like viewport, not Samsung firmware). Test-only fake DocumentsProvider is packaged solely in the `.saftest` target variant, protected by MANAGE_DOCUMENTS; it runs under the same UID as the instrumented test target; it is not shipped in the user APK. No physical RUIZU compatibility is implied by these tests.
 
 ## Physical acceptance still required
 
