@@ -2,6 +2,10 @@
 
 Native Java companion for Samsung/Android using Android's Storage Access Framework (SAF). Canonical source: [JoshBooksOnline](https://github.com/Parris-Tech-Services/JoshBooksOnline). No root, broad storage permission, formatting or library database edits.
 
+## Planned features
+
+See the [numbered feature to-do list](TODO.md) for all ten proposed additions, comparison-app quotes, source links and acceptance checks. These are planned features, not current app capabilities.
+
 ## Install
 
 1. Open the passing **RUIZU Sync Android APK** [Actions run](https://github.com/Parris-Tech-Services/JoshBooksOnline/actions/workflows/ruizu-sync-apk.yml).
