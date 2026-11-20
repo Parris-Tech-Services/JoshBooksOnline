@@ -278,7 +278,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         });
         optionsCard.addView(duplicateSpinner, margins(0, dp(4), 0, dp(14)));
 
-        verifyCheck = choice("Verify each copy (SHA-256 read-back)", state.verifyAfterCopy(),
+        verifyCheck = choice("Verify each copy (slower, catches USB errors)", state.verifyAfterCopy(),
                 (button, checked) -> state.setVerifyAfterCopy(checked));
         optionsCard.addView(verifyCheck);
         scopeCheck = choice("Only match duplicates inside the destination folder",

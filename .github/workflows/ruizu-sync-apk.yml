@@ -93,7 +93,6 @@ jobs:
           cores: 2
           ram-size: 2048
           heap-size: 256
-          enable-hw-acceleration: on
           disable-animations: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
