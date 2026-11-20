@@ -38,8 +38,14 @@ public final class MainActivity extends Activity {
     private static final int PICK_MUSIC_FILES = 201;
     private static final int PICK_PODCAST_FILES = 202;
     private static final int MAX_REDIRECTS = 5;
-    private static final long MAX_DOWNLOAD = 2L * 1024 * 1024 * 1024;
-    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private static final long MAX_DOWNLOAD = VerifiedCopy.MAX_BYTES;
+    private final android.os.Handler progressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable refreshProgress = new Runnable() {
+        @Override public void run() {
+            if (status != null) status.setText(TransferService.status());
+            progressHandler.postDelayed(this, 500);
+        }
+    };
     private SharedPreferences preferences;
     private TextView status;
     private TextView musicStatus;
@@ -56,10 +62,15 @@ public final class MainActivity extends Activity {
         layout.setPadding(pad, dp(28), pad, pad);
         scroll.addView(layout);
         setContentView(scroll);
+        if (android.os.Build.VERSION.SDK_INT >= 30) scroll.setOnApplyWindowInsetsListener((v, insets) -> {
+            android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return insets;
+        });
 
         TextView heading = text("RUIZU Sync", 27);
         layout.addView(heading);
-        layout.addView(text("One-tap audio transfer from your Samsung to your RUIZU player.", 15));
+        layout.addView(text("Copy and verify audio from your Samsung to your RUIZU player.", 15));
         layout.addView(text("1. Connect USB. 2. Choose the RUIZU Music and Podcasts folders once. 3. Transfer audio.", 14));
 
         musicStatus = text("", 13);
@@ -81,6 +92,7 @@ public final class MainActivity extends Activity {
         addButton(layout, "Transfer audio link to Music", v -> download(urlText.getText().toString().trim(), "music", ""));
         addButton(layout, "Transfer audio link to Podcasts", v -> download(urlText.getText().toString().trim(), "podcasts", ""));
 
+        layout.addView(text("For audiobooks, use numbered chapter filenames. Selection order and filenames are preserved. MP3 is recommended; other codecs depend on your player model.", 13));
         layout.addView(text("Your libraries", 17));
         addButton(layout, "Open JoshBooks", v -> open("https://josh-books-online.vercel.app/library"));
         addButton(layout, "Open Google Drive", v -> open("https://drive.google.com/drive/u/0/my-drive"));
@@ -91,7 +103,12 @@ public final class MainActivity extends Activity {
 
         status = text("Ready. Existing RUIZU files will not be deleted.", 14);
         layout.addView(status);
+        addButton(layout, "Cancel transfers", v -> TransferService.cancel());
         handleSharedIntent(getIntent());
+        if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 301);
+        }
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
@@ -110,7 +127,7 @@ public final class MainActivity extends Activity {
         b.setOnClickListener(click);
     }
     private void report(String message) {
-        runOnUiThread(() -> status.setText(message));
+        TransferService.report(message);
     }
     private void refreshFolders() {
         musicStatus.setText("Music destination: " + (preferences.contains("folder_music") ? "selected" : "not selected"));
@@ -132,7 +149,10 @@ public final class MainActivity extends Activity {
         startActivityForResult(i, request);
     }
     private boolean hasFolder(String target) {
-        if (preferences.contains("folder_" + target)) return true;
+        String chosen = preferences.getString("folder_" + target, null);
+        if (chosen != null) for (android.content.UriPermission grant : getContentResolver().getPersistedUriPermissions()) {
+            if (grant.getUri().toString().equals(chosen) && grant.isReadPermission() && grant.isWritePermission()) return true;
+        }
         report("Choose the RUIZU " + target + " folder first.");
         return false;
     }
@@ -145,7 +165,8 @@ public final class MainActivity extends Activity {
             if (chosen == null) return;
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             try {
-                getContentResolver().takePersistableUriPermission(chosen, flags);
+                if ((flags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) != (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) throw new IOException("Read and write permission required");
+                getContentResolver().takePersistableUriPermission(chosen, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                 String target = request == PICK_MUSIC_FOLDER ? "music" : "podcasts";
                 preferences.edit().putString("folder_" + target, chosen.toString()).apply();
                 refreshFolders();
@@ -215,75 +236,49 @@ public final class MainActivity extends Activity {
         Uri tree = Uri.parse(value);
         return DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
     }
-    private String availableName(String folder, String requested, long size) {
-        Uri parent = targetDir(folder);
-        Uri childUri = DocumentsContract.buildChildDocumentsUriUsingTree(Uri.parse(preferences.getString("folder_" + folder, "")),
-                DocumentsContract.getDocumentId(parent));
-        ArrayList<String> taken = new ArrayList<>();
-        try (Cursor c = getContentResolver().query(childUri,
-                new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE},
-                null, null, null)) {
-            if (c != null) while (c.moveToNext()) {
-                String name = c.getString(0);
-                if (name == null) continue;
-                taken.add(name.toLowerCase(Locale.ROOT));
-                if (name.equalsIgnoreCase(requested) && size >= 0 && !c.isNull(1) && size == c.getLong(1)) return null;
-            }
-        }
-        if (!taken.contains(requested.toLowerCase(Locale.ROOT))) return requested;
-        for (int n = 2; n < 10000; n++) {
-            String name = TransferUtils.withNumber(requested, n);
-            if (!taken.contains(name.toLowerCase(Locale.ROOT))) return name;
-        }
-        throw new IllegalStateException("Too many duplicate filenames");
-    }
-    private void writeToRuizu(InputStream input, String target, String originalName, long length) throws Exception {
-        String name = TransferUtils.safeName(originalName);
-        if (!TransferUtils.isSupportedAudio(name)) throw new IOException("Unsupported file: " + name);
-        String free = availableName(target, name, length);
-        if (free == null) { report("Already on RUIZU (same filename and size): " + name); return; }
-        String mime = free.toLowerCase(Locale.ROOT).endsWith(".mp3") ? "audio/mpeg" : "audio/*";
-        Uri created = DocumentsContract.createDocument(getContentResolver(), targetDir(target), mime, free);
-        if (created == null) throw new IOException("Could not create " + free + " on USB");
-        boolean ok = false;
-        try (OutputStream out = getContentResolver().openOutputStream(created, "w")) {
-            if (out == null) throw new IOException("Cannot write RUIZU folder");
-            byte[] buf = new byte[65536];
-            long copied = 0;
-            int n;
-            while ((n = input.read(buf)) != -1) {
-                copied += n;
-                if (copied > MAX_DOWNLOAD) throw new IOException("File exceeds 2 GB limit");
-                out.write(buf, 0, n);
-            }
-            out.flush();
-            ok = true;
-            report("Transferred: " + free);
-        } finally {
-            if (!ok) try { DocumentsContract.deleteDocument(getContentResolver(), created); } catch (Exception ignored) {}
-        }
+    private boolean writeToRuizu(InputStream input, String target, String originalName, long length) throws Exception {
+        Uri tree = Uri.parse(preferences.getString("folder_" + target, ""));
+        long started = android.os.SystemClock.elapsedRealtime();
+        long[] last = {0};
+        boolean copied = new SafTransfer(getApplicationContext(), TransferService::cancelled).transfer(
+            input, tree, originalName, length, (bytes, total) -> {
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (now - last[0] < 500) return;
+                last[0] = now;
+                long elapsed = Math.max(1, now - started);
+                String eta = total > bytes && bytes > 0 ? "; about " + ((total - bytes) * elapsed / bytes / 1000) + " s remaining" : "";
+                report(originalName + ": " + (bytes / 1024) + " KiB" + (total > 0 ? " / " + (total / 1024) + " KiB" : "") + eta);
+            });
+        report(copied ? "Transferred and SHA-256 verified: " + originalName : "Identical content already on RUIZU: " + originalName);
+        return copied;
     }
     private void copyUris(List<Uri> uris, String target) {
         if (!hasFolder(target) || uris.isEmpty()) return;
+        if (uris.size() > 250) { report("Select no more than 250 files per batch"); return; }
         report("Transferring " + uris.size() + " file(s)...");
-        io.execute(() -> {
-            int passed = 0, failed = 0;
-            for (Uri uri : uris) {
+        TransferService.submit(this, () -> {
+            int passed = 0, skipped = 0, failed = 0;
+            String lastError = "";
+            for (Uri uri : new java.util.LinkedHashSet<>(uris)) {
+                if (TransferService.cancelled()) break;
                 try {
+                    if (!"content".equals(uri.getScheme())) throw new IOException("Share audio using an Android document provider");
                     String name = displayName(uri);
                     if (!TransferUtils.isSupportedAudio(name)) throw new IOException("Not an audio file: " + name);
                     try (InputStream in = getContentResolver().openInputStream(uri)) {
                         if (in == null) throw new IOException("Cannot read " + name);
-                        writeToRuizu(in, target, name, fileSize(uri));
-                        passed++;
+                        if (writeToRuizu(in, target, name, fileSize(uri))) passed++;
+                        else skipped++;
                     }
                 } catch (Exception error) {
                     failed++;
-                    report("Transfer failed: " + error.getMessage());
+                    lastError = error.getMessage();
+                    report("Transfer failed: " + lastError);
                 }
             }
-            report("Finished: " + passed + " processed; " + failed + " failed. Safe to eject after completion.");
-        });
+            report("Batch finished: " + passed + " verified; " + skipped + " identical; " + failed + " failed."
+                + (failed > 0 ? " Last error: " + lastError + ". Reconnect and reselect to retry." : ""));
+        }, uris);
     }
 
     private HttpURLConnection connect(String raw) throws Exception {
@@ -294,7 +289,9 @@ public final class MainActivity extends Activity {
             c.setConnectTimeout(15000);
             c.setReadTimeout(30000);
             c.setInstanceFollowRedirects(false);
-            c.setRequestProperty("User-Agent", "RUIZUSync/0.1");
+            c.setRequestProperty("User-Agent", "RUIZUSync/0.2");
+            c.setRequestProperty("Accept-Encoding", "identity");
+            VerifiedCopy.checkCancelled(TransferService::cancelled);
             int code = c.getResponseCode();
             if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
                 String location = c.getHeaderField("Location");
@@ -309,7 +306,7 @@ public final class MainActivity extends Activity {
             }
             if (c.getContentLengthLong() > MAX_DOWNLOAD) {
                 c.disconnect();
-                throw new IOException("Download exceeds 2 GB");
+                throw new IOException("Download exceeds FAT32 4 GiB limit");
             }
             return c;
         }
@@ -323,7 +320,7 @@ public final class MainActivity extends Activity {
         }
         if (!link.startsWith("https://")) { report("Paste a direct HTTPS audio download link."); return; }
         report("Downloading audio...");
-        io.execute(() -> {
+        TransferService.submit(this, () -> {
             HttpURLConnection c = null;
             try {
                 c = connect(link);
@@ -364,19 +361,21 @@ public final class MainActivity extends Activity {
         if (!hasFolder("podcasts")) return;
         if (!link.startsWith("https://")) { report("Paste an HTTPS podcast RSS feed URL."); return; }
         report("Loading podcast episodes...");
-        io.execute(() -> {
+        TransferService.submit(this, () -> {
             HttpURLConnection c = null;
             try {
                 c = connect(link);
                 List<Episode> episodes = new ArrayList<>();
                 XmlPullParser x = Xml.newPullParser();
                 try (InputStream in = c.getInputStream()) {
-                    x.setInput(in, "UTF-8");
+                    x.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
+                    x.setInput(new LimitedInputStream(in, 5 * 1024 * 1024), null);
                     String title = "";
                     String enclosure = null;
                     boolean inEpisode = false;
                     int event;
                     while ((event = x.next()) != XmlPullParser.END_DOCUMENT && episodes.size() < 100) {
+                        VerifiedCopy.checkCancelled(TransferService::cancelled);
                         if (event == XmlPullParser.START_TAG) {
                             String tag = x.getName();
                             if ("item".equalsIgnoreCase(tag) || "entry".equalsIgnoreCase(tag)) {
@@ -397,6 +396,7 @@ public final class MainActivity extends Activity {
                     }
                 }
                 runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) { report("Feed loaded; reopen it to select episodes"); return; }
                     if (episodes.isEmpty()) { report("No downloadable MP3 episodes found in this feed."); return; }
                     String[] titles = new String[episodes.size()];
                     boolean[] selected = new boolean[episodes.size()];
@@ -420,8 +420,12 @@ public final class MainActivity extends Activity {
     private void open(String url) {
         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
     }
-    @Override protected void onDestroy() {
-        io.shutdown();
-        super.onDestroy();
+    @Override protected void onResume() {
+        super.onResume();
+        progressHandler.post(refreshProgress);
+    }
+    @Override protected void onPause() {
+        progressHandler.removeCallbacks(refreshProgress);
+        super.onPause();
     }
 }

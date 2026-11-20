@@ -1,35 +1,63 @@
-# RUIZU Sync (Android)
+# RUIZU Sync 0.2 (Android)
 
-Native, no-root USB transfer companion for Samsung/Android. This is an independent Android app inside JoshBooksOnline; it does not change the Next.js site.
+Native Java companion for Samsung/Android using Android's Storage Access Framework (SAF). Canonical source: [JoshBooksOnline](https://github.com/Parris-Tech-Services/JoshBooksOnline). No root, broad storage permission, formatting or library database edits.
 
-## Features
-- RUIZU 64GB MP3-player transfer using Android's Storage Access Framework (no broad-storage permission or Termux required).
-- One-time permission to existing RUIZU **Music** and **Podcasts** folders; Android persists access.
-- Multi-select audio from the Android picker, including locally stored MP3s and Google Drive files. Some Drive providers return generic MIME types, so file extension is checked.
-- Download freely available or otherwise authorised direct HTTPS MP3/audio links into Music or Podcasts.
-- Browse HTTPS podcast RSS feeds, select episodes and transfer them to Podcasts.
-- Receive audio through Android **Share**.
-- Open JoshBooks, Drive, Spotify, YouTube Music, and YouTube links in their official web or installed app contexts.
-- Skip files with identical names and sizes; auto-number filenames on conflicts; never format USB storage, overwrite or delete existing RUIZU files.
-- Remove incomplete output files after a failed copy.
+## Install
 
-**Limits:** Spotify and YouTube Music/YouTube streaming/offline downloads are not transferable MP3s. JoshBooks provides library links but does not yet expose a dedicated authenticated Android export endpoint. Use the Google Drive picker for original JoshBooks audio files. Format compatibility depends on the model of RUIZU; MP3 is the safest choice. Android may refuse selecting the USB volume root; choose Music or Podcasts subfolders instead. Disconnect/eject only after the transfer reports completion.
+1. Open the passing **RUIZU Sync Android APK** [Actions run](https://github.com/Parris-Tech-Services/JoshBooksOnline/actions/workflows/ruizu-sync-apk.yml).
+2. Download **ruizu-sync-debug-apk** from its Artifacts section (GitHub sign-in required), unzip and open `app-debug.apk` on the Samsung. Allow installation from that download app when Android prompts.
+3. Connect the player using a USB data cable/OTG adapter. Confirm it appears in Samsung My Files.
+4. Choose the existing **Music** and **Podcasts** folders using the app's folder buttons. Android may disallow selecting the volume root. The app stores only the granted folder URIs.
+5. Select local or Google Drive audio with **Add music** or **Add podcasts**. Wait for the batch result and no active transfer notification before using Android's USB eject action.
 
-## Build
+MP3 is recommended. WAV/FLAC/AAC/M4A/M4B/OGG/WMA may be copied but playback depends on the exact player model and codec. No conversion is performed. Protected Spotify/YouTube downloads cannot be exported; official app/site buttons and authorised RSS/direct audio are the alternatives.
 
-Requires JDK 17, Android SDK 35, and Gradle 8.9:
+## JoshBooks handoff
+
+Open an authenticated Drive audiobook's **Details** page in JoshBooks. **Export to RUIZU** lets you select one or multiple tracks, **Prepare selected audio**, then **Send to RUIZU Sync** in the Android file share sheet. Preparation and sharing are separate taps because browsers require fresh user activation to open a share sheet. Filenames carry the book title and zero-padded chapter numbers in the catalogue's existing order.
+
+This reuses `/api/stream/[fileId]` and the existing browser Google sign-in. Private audio is downloaded through the authenticated same-origin stream, then handed over as files; no tokens, signed download links or public Drive endpoints are introduced. Share support depends on the browser. Selections are bounded to 200 tracks/200 MiB of actual response bytes to control browser memory. Larger books: select their originals through the app's Google Drive SAF picker. Android source batches are limited to 250 files. Drive must be installed/signed in and expose the chosen audio through Android's picker.
+
+## Transfer guarantees and limits
+
+- Serial foreground `dataSync` service keeps transfers independent of screen rotation, with a bounded wake lock and cancellation in app/notification. Cancelling waits for outstanding I/O (network timeout up to 30 seconds) before cleaning up.
+- Streams use 64-bit counters up to FAT32's 4 GiB minus one byte single-file limit, without loading entire files into memory.
+- Write only a random app-owned `.ruizu-*.part` document; close output, verify source length where known, read back SHA-256, then rename to publish.
+- Existing files are never opened for write. Identical content with the requested or numbered conflict name is skipped; different content gets a numbered name. A same-name/same-size file is not assumed identical.
+- Filename sanitisation removes path/control characters, handles FAT reserved names, limits UTF-8 bytes and preserves audio extensions.
+- Disconnect, full storage, permission loss, failed close, read-back corruption or unsupported rename fails the operation. Failed temporary-file cleanup remains journalled and is retried before the next transfer to that folder. Recovery checks both the document URI and its exact original temporary name, so a successfully renamed file is preserved after a process interruption.
+- Retry is **restart from source**, not byte-range resume: reconnect, choose the folder again if needed, then reselect/re-share the files. Already verified identical outputs are skipped. The service is not restarted after process death because transient sources cannot be assumed available.
+- Android/USB providers do not universally expose reliable available capacity. Actual write/close failures are authoritative. Integrity read-back doubles USB I/O and cannot prove long-term flash durability.
+- Direct downloads require HTTPS, bounded redirects, timeouts and audio/octet-stream content; podcast feeds are bounded to 5 MiB and 100 episodes. The app does not bypass DRM or extract streaming audio.
+
+## Build and test
+
+JDK **17**, Android SDK platform **35**, build tools **35.0.0**, Gradle **8.9**, Android Gradle Plugin **8.7.3**. The checked-in Gradle wrapper includes the distribution SHA-256. Standard Google/Maven repositories supply dependencies; no Termux D8 executable is used.
 
 ```sh
-gradle -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug
+android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync \
+  :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+# With an Android emulator/device visible to adb:
+android/ruizu-sync/gradlew -p android/ruizu-sync :app:connectedDebugAndroidTest
 ```
 
-Download the APK from the **RUIZU Sync Android APK** GitHub Actions workflow artifact (`ruizu-sync-debug-apk`) and install it on your phone.
+CI uploads APK SHA-256, signing-certificate information, unit/lint reports, emulator reports and a UI screenshot. Emulator tests use Android 15/API 35, 1080×2340 at density 450 (A55-like viewport, not Samsung firmware). Test-only fake DocumentsProvider is packaged solely in the test APK; it is not shipped in the user APK. No physical RUIZU compatibility is implied by these tests.
 
-## First use
-1. Connect the RUIZU over USB and confirm Samsung My Files shows **USB storage 1**.
-2. Open RUIZU Sync, tap **Choose RUIZU Music folder**, navigate to USB storage 1 > Music, and select **Use this folder**.
-3. Repeat for **Podcasts**.
-4. Tap **Add music from phone / Google Drive**, select one or multiple MP3s, and let the transfer finish.
-5. For podcast episodes, paste a public HTTPS RSS feed and select the episodes to copy.
+## Physical acceptance still required
 
-This initial release is not verified on a physical RUIZU; GitHub Actions builds and unit-tests the APK. Device testing remains necessary before treating USB transfers as fully verified.
+- Galaxy A55's actual Android/One UI version: install, launch, readable layout, folder picker and persisted access after app/phone restart.
+- Real RUIZU USB enumeration, write/rename/read-back support, safe eject, reconnect and playback.
+- Multi-track playback order in the player's own database; MP3 tags, non-ASCII names and model-specific codecs.
+- Real unplug mid-copy, actual full storage and retry, preserving all existing tracks/database files.
+- Background/screen-off transfer, notification cancellation, rotating/reopening UI during a long transfer.
+- Google Drive cloud retrieval, Android shares from other apps, browser multi-file handoff and representative RSS/HTTPS audio.
+
+Use a small authorised MP3 first. The application never formats or clears the player.
+
+## Updating
+
+Increment `versionCode` for each update. Build and install with the **same signing key** to update in place and retain folder grants. CI caches its development debug keystore when available; **cache eviction or separate PR cache scopes can change that key**, so this is a test distribution, not a guaranteed stable release-signing channel. Compare `signing-certificate.txt` between builds. If Android rejects an update because certificates differ, uninstall/reinstall and choose both folders again; audio already on the player remains untouched. A durable production signing identity must be configured separately before promising seamless long-term updates. Never commit a production signing key.
+
+## DeepSeek integration boundary
+
+Development here is on `integration/ruizu-sync-release`, based on PR #8. DeepSeek's phone workspace is not assumed accessible. Preserve independently published work; compare its transfer service and tests before porting fixes, and retain one canonical implementation. The integration does not assert that DeepSeek's reported 115 checks ran here.
