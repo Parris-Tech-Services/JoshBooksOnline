@@ -8,7 +8,8 @@ public final class TransferStats {
         DUPLICATE_SKIPPED,
         UNSUPPORTED,
         FAILED,
-        DRM_BLOCKED
+        DRM_BLOCKED,
+        VERIFY_FAILED
     }
 
     private int totalFiles;
@@ -20,6 +21,8 @@ public final class TransferStats {
     private int failedFiles;
     private int drmFiles;
     private int renamedFiles;
+    private int retriedFiles;
+    private int playlistsWritten;
     private String currentFileName = "";
     private long currentBytes;
     private long currentTotal = -1;
@@ -36,6 +39,8 @@ public final class TransferStats {
         this.failedFiles = 0;
         this.drmFiles = 0;
         this.renamedFiles = 0;
+        this.retriedFiles = 0;
+        this.playlistsWritten = 0;
         this.currentFileName = "";
         this.currentBytes = 0;
         this.currentTotal = -1;
@@ -75,6 +80,9 @@ public final class TransferStats {
             case FAILED:
                 failedFiles++;
                 break;
+            case VERIFY_FAILED:
+                failedFiles++;
+                break;
             default:
                 break;
         }
@@ -89,6 +97,14 @@ public final class TransferStats {
 
     public synchronized void markRenamed() {
         renamedFiles++;
+    }
+
+    public synchronized void markRetry() {
+        retriedFiles++;
+    }
+
+    public synchronized void markPlaylistWritten() {
+        playlistsWritten++;
     }
 
     public synchronized double fraction() {
@@ -164,6 +180,14 @@ public final class TransferStats {
 
     public synchronized int getRenamedFiles() {
         return renamedFiles;
+    }
+
+    public synchronized int getRetriedFiles() {
+        return retriedFiles;
+    }
+
+    public synchronized int getPlaylistsWritten() {
+        return playlistsWritten;
     }
 
     public synchronized String getCurrentFileName() {

@@ -90,6 +90,7 @@ public final class DestRepo {
         }
     }
 
+    /** Drop stale SAF children after a transactional publish/rename. */
     public void invalidate() { childCache.clear(); }
 
     public Node root() {
@@ -195,6 +196,11 @@ public final class DestRepo {
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    /** Finds a direct child by name (case-insensitive), or null when absent. */
+    public Node findChild(Node dir, String name) throws IOException {
+        return childrenFor(dir).get(name.toLowerCase(Locale.ROOT));
     }
 
     public Set<String> existingNames(Node dir) throws IOException {

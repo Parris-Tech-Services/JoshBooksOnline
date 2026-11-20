@@ -31,16 +31,8 @@ public final class TransferService extends Service implements TransferManager.Li
     private NotificationManager notificationManager;
     private long lastNotificationUpdate;
 
-    public static void start(Context context) { start(context, java.util.Collections.emptyList()); }
-    public static boolean start(Context context, java.util.List<au.com.parristech.ruizusync.model.SourceItem> sources) {
+    public static void start(Context context) {
         Intent intent = new Intent(context, TransferService.class).setAction(ACTION_START);
-        android.content.ClipData grants = null;
-        for (au.com.parristech.ruizusync.model.SourceItem source : sources) {
-            if (!"content".equals(source.uri.getScheme())) continue;
-            if (grants == null) grants = android.content.ClipData.newRawUri("Audio", source.uri);
-            else grants.addItem(new android.content.ClipData.Item(source.uri));
-        }
-        if (grants != null) { intent.setClipData(grants); intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);
@@ -48,9 +40,8 @@ public final class TransferService extends Service implements TransferManager.Li
                 context.startService(intent);
             }
         } catch (Throwable ignored) {
-            return false;
+            // Even without the service the transfer keeps running while the app is alive.
         }
-        return true;
     }
 
     @Override
@@ -99,8 +90,6 @@ public final class TransferService extends Service implements TransferManager.Li
             // Keep transferring regardless.
         }
     }
-
-    @Override public void onTimeout(int startId, int fgsType) { manager.cancel(); stopSelf(); }
 
     @Override
     public void onDestroy() {

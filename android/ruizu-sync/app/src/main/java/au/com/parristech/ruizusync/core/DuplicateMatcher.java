@@ -24,10 +24,24 @@ public final class DuplicateMatcher {
                                        DestIndex index,
                                        boolean exact,
                                        DestHasher destHasher) throws IOException {
+        return check(source, index, exact, destHasher, null);
+    }
+
+    /**
+     * @param onlyInFolder when non-null, only files inside that folder ("" = player root) count
+     *                     as duplicates; when null the whole player tree is searched.
+     */
+    public static DuplicateCheck check(SourceFileInfo source,
+                                       DestIndex index,
+                                       boolean exact,
+                                       DestHasher destHasher,
+                                       String onlyInFolder) throws IOException {
         if (source == null || source.size < 0) {
             return DuplicateCheck.none();
         }
-        List<DestEntry> candidates = index.sameSize(source.size);
+        List<DestEntry> candidates = onlyInFolder == null
+                ? index.sameSize(source.size)
+                : index.sameSizeInFolder(source.size, onlyInFolder);
         if (candidates.isEmpty()) {
             return DuplicateCheck.none();
         }

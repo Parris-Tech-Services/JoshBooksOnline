@@ -13,9 +13,9 @@ KEYSTORE="$ROOT/.build/keystore/ruizu-debug.jks"
 KS_PASS="ruizu123"
 
 MIN_SDK=26
-TARGET_SDK=34
-VERSION_CODE=2
-VERSION_NAME="1.1.0"
+TARGET_SDK=35
+VERSION_CODE=4
+VERSION_NAME="1.2.0"
 
 [ -f "$SDK" ] || { echo "Missing framework stubs at $SDK (run tools/fetch-sdk.sh)" >&2; exit 1; }
 [ -f "$R8_JAR" ] || { echo "Missing R8 at $R8_JAR (run tools/fetch-sdk.sh)" >&2; exit 1; }
@@ -45,12 +45,20 @@ aapt2 link \
 
 echo "==> 3/7 Compiling Java (javac)"
 find "$APP/java" "$BUILD/gen" -name '*.java' | sort > "$BUILD/sources.txt"
-javac --release 17 -encoding UTF-8 -classpath "$SDK" -d "$BUILD/classes" @"$BUILD/sources.txt"
+LIB_CP=""
+for jar in "$ROOT"/app/libs/*.jar; do
+  [ -f "$jar" ] && LIB_CP="$LIB_CP:$jar"
+done
+javac --release 17 -encoding UTF-8 -classpath "$SDK$LIB_CP" -d "$BUILD/classes" @"$BUILD/sources.txt"
 
 echo "==> 4/7 Dexing (official R8/D8)"
 find "$BUILD/classes" -name '*.class' | sort > "$BUILD/classes.txt"
+DEX_INPUTS=$(cat "$BUILD/classes.txt")
+for jar in "$ROOT"/app/libs/*.jar; do
+  [ -f "$jar" ] && DEX_INPUTS="$DEX_INPUTS $jar"
+done
 java -cp "$R8_JAR" com.android.tools.r8.D8 --release --min-api "$MIN_SDK" --lib "$SDK" \
-  --output "$BUILD/dex" $(cat "$BUILD/classes.txt")
+  --output "$BUILD/dex" $DEX_INPUTS
 
 echo "==> 5/7 Packaging classes.dex"
 cp "$BUILD/app-unsigned.apk" "$BUILD/app-with-dex.apk"

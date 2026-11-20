@@ -46,6 +46,34 @@ public final class FolderPlanner {
                                               String album,
                                               String sourceFolder,
                                               List<String> sourceRelDirs) {
+        return folderSegments(mode, artist, album, sourceFolder, sourceRelDirs, null);
+    }
+
+    /**
+     * @param prefix optional destination subfolder prepended to the planned layout, used by
+     *               saved folder-pair rules such as Drive/Audiobooks -> RUIZU/Music/Audiobooks
+     */
+    public static List<String> folderSegments(OrganiseMode mode,
+                                              String artist,
+                                              String album,
+                                              String sourceFolder,
+                                              List<String> sourceRelDirs,
+                                              List<String> prefix) {
+        List<String> base = baseSegments(mode, artist, album, sourceFolder, sourceRelDirs);
+        List<String> prefixSegments = FileNameSanitizer.pathSegments(prefix);
+        if (prefixSegments.isEmpty()) {
+            return base;
+        }
+        List<String> combined = new ArrayList<>(prefixSegments);
+        combined.addAll(base);
+        return combined;
+    }
+
+    private static List<String> baseSegments(OrganiseMode mode,
+                                             String artist,
+                                             String album,
+                                             String sourceFolder,
+                                             List<String> sourceRelDirs) {
         switch (mode) {
             case ARTIST_ALBUM:
                 return artistAlbum(artist, album);
