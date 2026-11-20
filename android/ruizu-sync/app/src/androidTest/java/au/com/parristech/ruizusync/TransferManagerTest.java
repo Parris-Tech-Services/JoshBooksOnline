@@ -17,7 +17,7 @@ import static org.junit.Assert.*;
 public final class TransferManagerTest {
     @Test public void actualManagerUsesVerifiedSafAndRejectsOverwrite() throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-        context.getContentResolver().call(FakeUsbProvider.AUTHORITY,"reset",null,null);
+        context.getContentResolver().call(Uri.parse("content://" + FakeUsbProvider.AUTHORITY),"reset",null,null);
         File source=new File(context.getCacheDir(),"integration-source.mp3");
         try(FileOutputStream out=new FileOutputStream(source)){out.write(new byte[]{1,2,3});}
         SourceItem item=new SourceItem(Uri.fromFile(source),"integration-source.mp3",3,"audio/mpeg","",null,null);

@@ -20,7 +20,7 @@ public final class SafTransferTest {
         control("reset",null); context.getSharedPreferences("ruizu-pending",0).edit().clear().commit();
     }
     private android.os.Bundle control(String method,String value) {
-        return context.getContentResolver().call(FakeUsbProvider.AUTHORITY,method,value,null);
+        return context.getContentResolver().call(Uri.parse("content://" + FakeUsbProvider.AUTHORITY),method,value,null);
     }
     private boolean transfer(byte[] bytes) throws Exception {
         return new SafTransfer(context,()->false).transfer(new ByteArrayInputStream(bytes),tree,"chapter.mp3",bytes.length,(n,t)->{});

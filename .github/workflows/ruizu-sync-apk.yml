@@ -33,7 +33,7 @@ jobs:
           path: ~/.android/debug.keystore
           key: ruizu-development-signing-v1
       - name: Unit tests, Android lint and debug APK
-        run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleSafTest :app:assembleSafTestAndroidTest
+        run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:lintSafTest :app:assembleDebug :app:assembleSafTest :app:assembleSafTestAndroidTest
       - name: Upload emulator test APKs
         uses: actions/upload-artifact@v4
         with:

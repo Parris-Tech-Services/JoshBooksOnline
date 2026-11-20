@@ -18,6 +18,9 @@ public final class FakeUsbProvider extends DocumentsProvider {
     }
     private void connected() throws FileNotFoundException { if(disconnected) throw new FileNotFoundException("USB detached"); }
     @Override public synchronized Bundle call(String method, String argument, Bundle extras) {
+        if (!Arrays.asList("reset", "disconnected", "full", "corrupt", "renameFails", "state").contains(method)) {
+            return super.call(method, argument, extras);
+        }
         if (method.equals("reset")) reset();
         if (method.equals("disconnected")) disconnected=Boolean.parseBoolean(argument);
         if (method.equals("full")) full=Boolean.parseBoolean(argument);
@@ -27,6 +30,9 @@ public final class FakeUsbProvider extends DocumentsProvider {
         result.putStringArrayList("names",new ArrayList<>(names.values()));
         result.putStringArrayList("ids",new ArrayList<>(names.keySet()));
         return result;
+    }
+    @Override public synchronized boolean isChildDocument(String parent, String document) {
+        return parent.equals("root") && names.containsKey(document);
     }
     public Cursor queryRoots(String[] projection) { return new MatrixCursor(new String[]{DocumentsContract.Root.COLUMN_ROOT_ID}); }
     private MatrixCursor cursor() {
