@@ -70,8 +70,10 @@ MP3 is the safest choice across RUIZU models; check the player manual for APE/OG
 Two independent paths exist.
 
 **CI (authoritative):** GitHub Actions runs `gradle :app:testDebugUnitTest :app:assembleDebug`
-with Android SDK 35, then `tools/verify.sh` (signature, alignment, manifest, dex) and an emulator
-smoke test with hardware acceleration when the runner grants KVM access.
+with Android SDK 35, then `tools/verify.sh` (signature, alignment, manifest, dex), then an
+emulator smoke test (`.github/scripts/emulator-smoke.sh`) on an API 34 KVM-accelerated AVD: it
+installs the APK, launches `MainActivity`, verifies the rendered labels and crash buffer, and
+uploads a screenshot as the `ruizu-sync-emulator-evidence` artifact.
 
 **Termux / offline toolchain:**
 
@@ -95,7 +97,7 @@ bundled compiler.
 | JVM feed | 15 JUnit tests incl. streaming chunk boundaries and early stop on 400-episode feeds |
 | JVM utils | Original `TransferUtils` behaviour |
 | APK static | v2/v3 signature, 4-byte alignment, manifest (`exported`, FGS type, permissions), single- or multi-dex payload |
-| Emulator | install, launch, expected UI text, no crash in the crash buffer, screenshot artifact |
+| Emulator (API 34, KVM) | **passing in CI**: installs, `MainActivity` gains window focus, expected labels render, screenshot captured, crash buffer clean |
 
 Run locally: `gradle -p android/ruizu-sync :app:testDebugUnitTest` or `./tools/test.sh`.
 

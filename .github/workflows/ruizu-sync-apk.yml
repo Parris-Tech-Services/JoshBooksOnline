@@ -107,4 +107,5 @@ jobs:
           path: |
             emulator-launch.png
             window.xml
+            window-scrolled.xml
           if-no-files-found: warn

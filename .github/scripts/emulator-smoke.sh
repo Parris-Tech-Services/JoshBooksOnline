@@ -45,13 +45,15 @@ for needle in "RUIZU Sync" "No files selected" "Choose player folder"; do
 done
 
 echo "== scroll to the transfer controls =="
-adb shell input swipe 540 1500 540 500 250 || true
+adb shell input swipe 540 1600 540 300 200 || true
+sleep 1
+adb shell input swipe 540 1600 540 300 200 || true
 sleep 1
 dump_ui window-scrolled.xml
 if [ -f window-scrolled.xml ] && grep -qF 'text="Start transfer"' window-scrolled.xml; then
     echo "ui shows: Start transfer"
 else
-    echo "note: Start transfer not captured after scroll (screen size dependent)"
+    echo "note: Start transfer not captured after scrolling (screen size dependent)"
 fi
 
 echo "== screenshot =="
