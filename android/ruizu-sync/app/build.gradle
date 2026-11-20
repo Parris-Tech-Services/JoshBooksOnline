@@ -9,8 +9,11 @@ android {
         minSdk 26
         // targetSdk 35: Android 15 enforces edge-to-edge, so MainActivity applies window insets.
         targetSdk 35
-        versionCode 5
-        versionName '1.2.1'
+        // versionCode must increase for every published build: Android only performs an
+        // in-place update (keeping app data and persisted SAF permissions) when the new
+        // APK has the same package, the same signing certificate and a higher versionCode.
+        versionCode 6
+        versionName '1.2.2'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
@@ -30,10 +33,14 @@ android {
 
     // Main's isolated fake-USB provider remains test-only, not part of the debug APK.
     buildTypes {
-        // Separate install identity avoids the incompatible random debug certificates
-        // from previous test APKs. This release identity must remain stable for updates.
+        // Canonical identity: the release APK ships as the default applicationId
+        // (au.com.parristech.ruizusync), which is the identity already installed and verified
+        // on the Galaxy A55. Its certificate SHA-256 matches the project release key
+        // d16afeee87dd25be0421223d748ab175cbb37b4c5152042933342cc5880307b4, so raising
+        // versionCode upgrades it in place and preserves saved settings and SAF grants.
+        // Do not reintroduce an applicationIdSuffix here: a new package would install as a
+        // second app and silently orphan the user's existing data and permissions.
         release {
-            applicationIdSuffix '.stable'
             minifyEnabled false
             debuggable false
             if (System.getenv('RELEASE_KEYSTORE')) {
