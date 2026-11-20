@@ -14,6 +14,20 @@ android {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
+    // Dedicated release key is injected only by trusted CI secrets.
+    // Never commit the keystore or hardcode its password in this repository.
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv('RELEASE_KEYSTORE')
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('RELEASE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('RELEASE_KEY_ALIAS')
+                keyPassword System.getenv('RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
+
     // Main's isolated fake-USB provider remains test-only, not part of the debug APK.
     buildTypes {
         // Separate install identity avoids the incompatible random debug certificates
@@ -22,6 +36,9 @@ android {
             applicationIdSuffix '.stable'
             minifyEnabled false
             debuggable false
+            if (System.getenv('RELEASE_KEYSTORE')) {
+                signingConfig signingConfigs.release
+            }
         }
         safTest {
             initWith debug
