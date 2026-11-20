@@ -14,8 +14,8 @@ KS_PASS="ruizu123"
 
 MIN_SDK=26
 TARGET_SDK=35
-VERSION_CODE=4
-VERSION_NAME="1.2.0"
+VERSION_CODE=5
+VERSION_NAME="1.2.1"
 
 [ -f "$SDK" ] || { echo "Missing framework stubs at $SDK (run tools/fetch-sdk.sh)" >&2; exit 1; }
 [ -f "$R8_JAR" ] || { echo "Missing R8 at $R8_JAR (run tools/fetch-sdk.sh)" >&2; exit 1; }
@@ -68,16 +68,26 @@ echo "==> 6/7 Aligning (zipalign)"
 zipalign -f -p 4 "$BUILD/app-with-dex.apk" "$BUILD/app-aligned.apk"
 
 echo "==> 7/7 Signing (apksigner)"
-if [ ! -f "$KEYSTORE" ]; then
-  echo "    creating debug keystore"
-  mkdir -p "$(dirname "$KEYSTORE")"
-  keytool -genkeypair -keystore "$KEYSTORE" -storepass "$KS_PASS" -keypass "$KS_PASS" \
-    -alias ruizu -keyalg RSA -keysize 2048 -validity 10950 \
-    -dname "CN=RUIZU Sync Debug, O=RUIZU Sync, C=GB" >/dev/null 2>&1
+if [ -n "${RELEASE_KEYSTORE:-}" ] && [ -f "${RELEASE_KEYSTORE}" ]; then
+  echo "    signing with the release key"
+  apksigner sign --ks "$RELEASE_KEYSTORE" \
+    --ks-pass "pass:${RELEASE_KEYSTORE_PASSWORD}" --key-pass "pass:${RELEASE_KEY_PASSWORD}" \
+    --ks-key-alias "${RELEASE_KEY_ALIAS}" --min-sdk-version "$MIN_SDK" \
+    --out "$DIST/RUIZU-Sync-$VERSION_NAME-release.apk" "$BUILD/app-aligned.apk"
+  OUT="$DIST/RUIZU-Sync-$VERSION_NAME-release.apk"
+else
+  if [ ! -f "$KEYSTORE" ]; then
+    echo "    creating local debug keystore"
+    mkdir -p "$(dirname "$KEYSTORE")"
+    keytool -genkeypair -keystore "$KEYSTORE" -storepass "$KS_PASS" -keypass "$KS_PASS" \
+      -alias ruizu -keyalg RSA -keysize 2048 -validity 10950 \
+      -dname "CN=RUIZU Sync Debug, O=RUIZU Sync, C=GB" >/dev/null 2>&1
+  fi
+  apksigner sign --ks "$KEYSTORE" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
+    --ks-key-alias ruizu --out "$DIST/RUIZU-Sync-$VERSION_NAME-debug.apk" "$BUILD/app-aligned.apk"
+  OUT="$DIST/RUIZU-Sync-$VERSION_NAME-debug.apk"
 fi
-apksigner sign --ks "$KEYSTORE" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
-  --ks-key-alias ruizu --out "$DIST/RUIZU-Sync-$VERSION_NAME-debug.apk" "$BUILD/app-aligned.apk"
 
 echo
-echo "APK written to: $DIST/RUIZU-Sync-$VERSION_NAME-debug.apk"
+echo "APK written to: $OUT"
 ls -l "$DIST"

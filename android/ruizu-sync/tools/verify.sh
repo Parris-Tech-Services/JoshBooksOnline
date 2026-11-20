@@ -6,7 +6,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APK="${1:-$ROOT/dist/RUIZU-Sync-1.2.0-debug.apk}"
+APK="${1:-$ROOT/dist/RUIZU-Sync-1.2.1-release.apk}"
 WORK="$ROOT/.build/verify"
 FAILURES=0
 

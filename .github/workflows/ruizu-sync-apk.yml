@@ -37,20 +37,49 @@ jobs:
       - name: Unit tests and debug APK
         run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug
 
+      - name: Build release APK (signed with the project release key)
+        env:
+          RELEASE_KEYSTORE: ${{ github.workspace }}/.keys/release.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RUIZU_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RUIZU_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RUIZU_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p .keys
+          printf '%s' "${{ secrets.RUIZU_RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "$RELEASE_KEYSTORE"
+          gradle --no-daemon -p android/ruizu-sync :app:assembleRelease
+          ls -l android/ruizu-sync/app/build/outputs/apk/release/
+
       - name: Static APK verification
         run: |
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
           export PATH="$SDK/build-tools/35.0.0:$SDK/platform-tools:$PATH"
           cd android/ruizu-sync
+          echo "== debug APK =="
           bash ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
+          echo "== release APK =="
+          bash ./tools/verify.sh app/build/outputs/apk/release/app-release.apk
+          echo "== release APK must not be debuggable =="
+          if aapt2 dump badging app/build/outputs/apk/release/app-release.apk | grep -q 'application-debuggable'; then
+            echo "release APK is debuggable" >&2
+            exit 1
+          fi
 
-      - name: Upload APK
+      - name: Upload debug APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ruizu-sync-debug-apk
           path: android/ruizu-sync/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
+
+      - name: Upload release APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-sync-release-apk
+          path: android/ruizu-sync/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
   emulator:
@@ -80,7 +109,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ruizu-sync-debug-apk
+          name: ruizu-sync-release-apk
           path: apk
 
       - name: Install and launch on emulator
@@ -96,7 +125,7 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/emulator-smoke.sh apk/app-debug.apk
+          script: bash .github/scripts/emulator-smoke.sh apk/app-release.apk
 
 
       - name: Upload emulator evidence
