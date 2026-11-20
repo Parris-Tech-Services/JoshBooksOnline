@@ -90,6 +90,9 @@ public final class DestRepo {
         }
     }
 
+    /** Drop stale SAF children after a transactional publish/rename. */
+    public void invalidate() { childCache.clear(); }
+
     public Node root() {
         return new Node(rootDocId, rootName, true, -1, "");
     }
