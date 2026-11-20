@@ -96,31 +96,8 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: |
-            set -e
-            adb install -r apk/app-debug.apk
-            adb shell pm grant au.com.parristech.ruizusync android.permission.POST_NOTIFICATIONS || true
-            adb shell am start -W -n au.com.parristech.ruizusync/.ui.MainActivity
-            sleep 8
-            echo "== process =="
-            adb shell pidof au.com.parristech.ruizusync
-            echo "== top activity =="
-            adb shell dumpsys activity top | grep -m1 "ACTIVITY"
-            adb shell dumpsys activity top | grep -q "au.com.parristech.ruizusync/.ui.MainActivity"
-            echo "== ui dump =="
-            adb shell uiautomator dump /sdcard/window.xml || true
-            adb pull /sdcard/window.xml window.xml || true
-            if [ -f window.xml ]; then
-              grep -o 'text="RUIZU Sync"' window.xml | head -1
-              grep -o 'text="Choose player folder"' window.xml | head -1
-              grep -o 'text="Start transfer"' window.xml | head -1
-            fi
-            adb exec-out screencap -p > emulator-launch.png
-            echo "== crash check =="
-            if adb logcat -d -b crash | grep -q "au.com.parristech.ruizusync"; then
-              echo "crash buffer mentions the app"; adb logcat -d -b crash; exit 1
-            fi
-            echo "emulator launch OK"
+          script: bash .github/scripts/emulator-smoke.sh apk/app-debug.apk
+
 
       - name: Upload emulator evidence
         if: always()
