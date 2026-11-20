@@ -109,6 +109,10 @@ public final class MainActivity extends Activity implements TransferManager.List
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         state = AppState.get();
+        if (state.destinationTree() == null) {
+            Uri restored = au.com.parristech.ruizusync.DestinationAccess.restore(this);
+            if (restored != null) state.setDestination(restored, "Player folder (saved permission)");
+        }
         manager = TransferManager.get(this);
         sourceRepo = new SourceRepo(this);
         buildUi();
@@ -641,6 +645,10 @@ public final class MainActivity extends Activity implements TransferManager.List
             Uri tree = data.getData();
             if (tree != null) {
                 takePersistable(tree, false);
+                au.com.parristech.ruizusync.DestinationAccess.remember(this, tree);
+                if (!au.com.parristech.ruizusync.DestinationAccess.writable(this, tree)) {
+                    toast("Folder access is temporary; choose it again after restarting the app");
+                }
                 state.setDestination(tree, "");
                 destFreeBytes = -1;
                 refreshDestination(tree);
@@ -669,6 +677,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         if (uris.isEmpty() || isFinishing()) {
             return;
         }
+        if (uris.size() > 5000) { toast("Select at most 5000 files per batch"); return; }
         setBusy(true, "Reading selected files…");
         for (Uri uri : uris) {
             takePersistable(uri, true);
@@ -937,7 +946,10 @@ public final class MainActivity extends Activity implements TransferManager.List
             toast(describe(e));
             return;
         }
-        TransferService.start(this, sources);
+        if (!TransferService.start(this, sources)) {
+            manager.cancel();
+            toast("Could not start the foreground service; transfer cancelled. Reopen the app and retry.");
+        }
         sawRunning = true;
         notifiedPhase = null;
         render(manager.snapshot());

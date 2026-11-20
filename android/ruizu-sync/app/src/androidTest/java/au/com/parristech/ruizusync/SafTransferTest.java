@@ -32,6 +32,11 @@ public final class SafTransferTest {
         assertTrue(transfer(new byte[]{1,2,3})); assertFalse(transfer(new byte[]{1,2,3}));
         assertEquals(1,control("state",null).getInt("count")); assertTrue(control("state",null).getStringArrayList("names").contains("chapter.mp3"));
     }
+    @Test public void testRenamedIdenticalContentSkipped() throws Exception {
+        transfer(new byte[]{1,2,3});
+        assertFalse(new SafTransfer(context,()->false).transfer(new ByteArrayInputStream(new byte[]{1,2,3}),tree,"renamed.mp3",3,(n,t)->{}));
+        assertEquals(1,control("state",null).getInt("count"));
+    }
     @Test public void testSameSizeDifferentContentPreserved() throws Exception {
         transfer(new byte[]{1,2,3}); transfer(new byte[]{3,2,1});
         assertFalse(transfer(new byte[]{3,2,1}));

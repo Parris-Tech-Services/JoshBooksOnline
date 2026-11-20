@@ -32,7 +32,7 @@ public final class TransferService extends Service implements TransferManager.Li
     private long lastNotificationUpdate;
 
     public static void start(Context context) { start(context, java.util.Collections.emptyList()); }
-    public static void start(Context context, java.util.List<au.com.parristech.ruizusync.model.SourceItem> sources) {
+    public static boolean start(Context context, java.util.List<au.com.parristech.ruizusync.model.SourceItem> sources) {
         Intent intent = new Intent(context, TransferService.class).setAction(ACTION_START);
         android.content.ClipData grants = null;
         for (au.com.parristech.ruizusync.model.SourceItem source : sources) {
@@ -48,8 +48,9 @@ public final class TransferService extends Service implements TransferManager.Li
                 context.startService(intent);
             }
         } catch (Throwable ignored) {
-            // Even without the service the transfer keeps running while the app is alive.
+            return false;
         }
+        return true;
     }
 
     @Override

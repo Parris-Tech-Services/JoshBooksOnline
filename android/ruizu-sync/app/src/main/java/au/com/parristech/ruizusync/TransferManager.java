@@ -339,20 +339,21 @@ public final class TransferManager {
 
         String desiredName = TransferUtils.safeName(FileNameSanitizer.fileName(item.displayName));
         long[] previous = {0};
+        boolean copied;
         try (InputStream in = sourceRepo.open(item.uri)) {
-            boolean copied = new SafTransfer(context, () -> cancelRequested, targetDir.docId,
+            copied = new SafTransfer(context, () -> cancelRequested, targetDir.docId,
                     request.duplicateMode != DuplicateMode.KEEP_BOTH).transfer(
                 in, request.destTree, desiredName, item.size, (bytes, total) -> {
                     stats.addBytes(bytes - previous[0]); previous[0] = bytes; deliver(false);
                 });
-            stats.finishFile(copied ? TransferStats.Outcome.COPIED : TransferStats.Outcome.DUPLICATE_SKIPPED);
-            log(copied ? "SHA-256 verified: " + desiredName : "Identical content already present: " + desiredName);
         } catch (java.io.InterruptedIOException error) {
             if (cancelRequested) throw new CancelledException();
             throw error;
         } finally {
             destRepo.invalidate();
         }
+        stats.finishFile(copied ? TransferStats.Outcome.COPIED : TransferStats.Outcome.DUPLICATE_SKIPPED);
+        log(copied ? "SHA-256 verified: " + desiredName : "Identical content already present: " + desiredName);
     }
 
     private void checkCancelled() throws CancelledException {

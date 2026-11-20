@@ -24,7 +24,7 @@ This reuses `/api/stream/[fileId]` and the existing browser Google sign-in. Priv
 - DeepSeek transfer manager with foreground `dataSync` service keeps transfers independent of screen rotation, with a bounded wake lock and cancellation in app/notification. Cancelling waits for outstanding I/O (network timeout up to 30 seconds) before cleaning up.
 - Streams use 64-bit counters up to FAT32's 4 GiB minus one byte single-file limit, without loading entire files into memory.
 - Write only a random app-owned `.ruizu-*.part` document; close output, verify source length where known, read back SHA-256, then rename to publish.
-- Existing files are never opened for write. Identical content with the requested or numbered conflict name is skipped; different content gets a numbered name. A same-name/same-size file is not assumed identical.
+- Existing files are never opened for write. Same-size identical content in the target folder is skipped even under a different name (unknown-size providers are checked by matching/numbered names); different content gets a numbered name. A same-name/same-size file is not assumed identical.
 - Filename sanitisation removes path/control characters, handles FAT reserved names, limits UTF-8 bytes and preserves audio extensions.
 - Disconnect, full storage, permission loss, failed close, read-back corruption or unsupported rename fails the operation. Failed temporary-file cleanup remains journalled and is retried before the next transfer to that folder. Recovery checks both the document URI and its exact original temporary name, so a successfully renamed file is preserved after a process interruption.
 - Retry is **restart from source**, not byte-range resume: reconnect, choose the folder again if needed, then reselect/re-share the files. Already verified identical outputs are skipped. The service is not restarted after process death because transient sources cannot be assumed available.
@@ -42,7 +42,7 @@ android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync \
 android/ruizu-sync/gradlew -p android/ruizu-sync :app:connectedSafTestAndroidTest
 ```
 
-CI uploads APK SHA-256, signing-certificate information, unit/lint reports, emulator reports and a UI screenshot. Emulator tests use Android 15/API 35, 1080×2340 at density 450 (A55-like viewport, not Samsung firmware). Test-only fake DocumentsProvider is packaged solely in the `.saftest` target variant, protected by MANAGE_DOCUMENTS; it runs under the same UID as the instrumented test target; it is not shipped in the user APK. No physical RUIZU compatibility is implied by these tests.
+CI uploads APK SHA-256, signing-certificate information, unit/lint reports, emulator reports and a UI screenshot. Emulator tests use Android 8/API 26 and Android 15/API 35, 1080×2340 at density 450 (A55-like viewport, not Samsung firmware). Test-only fake DocumentsProvider is packaged solely in the `.saftest` target variant, protected by MANAGE_DOCUMENTS; it runs under the same UID as the instrumented test target; it is not shipped in the user APK. No physical RUIZU compatibility is implied by these tests.
 
 ## Physical acceptance still required
 

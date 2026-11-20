@@ -33,7 +33,15 @@ jobs:
           path: ~/.android/debug.keystore
           key: ruizu-development-signing-v1
       - name: Unit tests, Android lint and debug APK
-        run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleSafTestAndroidTest
+        run: android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleSafTest :app:assembleSafTestAndroidTest
+      - name: Upload emulator test APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-instrumentation-apks
+          path: |
+            android/ruizu-sync/app/build/outputs/apk/safTest/*.apk
+            android/ruizu-sync/app/build/outputs/apk/androidTest/safTest/*.apk
+          if-no-files-found: error
       - name: Static APK verification
         run: |
           export PATH="$ANDROID_HOME/build-tools/35.0.0:$PATH"
@@ -61,6 +69,11 @@ jobs:
           if-no-files-found: error
 
   emulator:
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 35]
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -69,18 +82,19 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
         with:
-          gradle-version: "8.9"
+          name: ruizu-instrumentation-apks
+          path: test-apks
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: SAF fault injection and A55-sized UI on Android 15
+      - name: SAF fault injection and A55-sized UI
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           arch: x86_64
           target: google_apis
           profile: pixel_7
@@ -88,16 +102,22 @@ jobs:
           script: |
             adb shell wm size 1080x2340
             adb shell wm density 450
-            android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:connectedSafTestAndroidTest
-            adb pull /sdcard/Android/data/au.com.parristech.ruizusync.saftest/files/ruizu-ui.png ruizu-ui.png
+            adb install -r test-apks/safTest/app-safTest.apk
+            adb install -r test-apks/androidTest/safTest/app-safTest-androidTest.apk
+            adb shell am instrument -w au.com.parristech.ruizusync.saftest.test/androidx.test.runner.AndroidJUnitRunner > instrumentation.txt
+            cat instrumentation.txt
+            adb pull /sdcard/Android/data/au.com.parristech.ruizusync.saftest/files/ruizu-ui.png ruizu-ui.png || true
+            grep -Eq '^OK \([0-9]+ tests?\)' instrumentation.txt
+            grep -q '^INSTRUMENTATION_CODE: -1' instrumentation.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ruizu-emulator-results
+          name: ruizu-emulator-results-api-${{ matrix.api }}
           path: |
             android/ruizu-sync/app/build/reports/androidTests/
             android/ruizu-sync/app/build/outputs/androidTest-results/
             ruizu-ui.png
+            instrumentation.txt
 
   joshbooks:
     runs-on: ubuntu-24.04

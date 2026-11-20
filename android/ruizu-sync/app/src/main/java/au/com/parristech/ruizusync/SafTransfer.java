@@ -15,6 +15,7 @@ public final class SafTransfer {
     private final BooleanSupplier cancelled;
     private final String directoryId;
     private final boolean skipIdentical;
+    private final Map<Uri, Long> sizes = new HashMap<>();
     public SafTransfer(Context context, BooleanSupplier cancelled) {
         this(context, cancelled, null, true);
     }
@@ -34,12 +35,17 @@ public final class SafTransfer {
     }
     private Map<String, Uri> children(Uri tree) throws IOException {
         Map<String, Uri> found = new LinkedHashMap<>();
+        sizes.clear();
         Uri list = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId(tree));
         try (Cursor c = resolver.query(list, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_SIZE}, null, null, null)) {
             if (c == null) throw new IOException("USB folder unavailable; reconnect and choose it again");
-            while (c.moveToNext()) found.put(c.getString(1).toLowerCase(Locale.ROOT),
-                    DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)));
+            while (c.moveToNext()) {
+                Uri uri = DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0));
+                found.put(c.getString(1).toLowerCase(Locale.ROOT), uri);
+                int column = c.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE);
+                sizes.put(uri, column >= 0 && !c.isNull(column) ? c.getLong(column) : -1L);
+            }
         }
         return found;
     }
@@ -80,16 +86,20 @@ public final class SafTransfer {
         Exception failure = null;
         try {
             byte[] hash;
+            long[] written = {0};
             try (OutputStream out = resolver.openOutputStream(temporary, "wt")) {
                 if (out == null) throw new IOException("Cannot write USB; reconnect or free space");
-                hash = VerifiedCopy.copy(source, out, size, cancelled, progress);
+                hash = VerifiedCopy.copy(source, out, size, cancelled, (bytes, total) -> { written[0] = bytes; progress.update(bytes, total); });
             } // Closing must succeed before success or verification.
             try (InputStream check = resolver.openInputStream(temporary)) {
                 if (check == null) throw new IOException("Cannot read USB for verification");
                 VerifiedCopy.verify(hash, check, cancelled);
             }
             for (Map.Entry<String, Uri> entry : existing.entrySet()) {
-                if (!skipIdentical || !TransferUtils.isConflictName(name, entry.getKey())) continue;
+                if (!skipIdentical || !TransferUtils.isSupportedAudio(entry.getKey())) continue;
+                long existingSize = sizes.getOrDefault(entry.getValue(), -1L);
+                if (existingSize >= 0 && existingSize != written[0]) continue;
+                if (existingSize < 0 && !TransferUtils.isConflictName(name, entry.getKey())) continue;
                 try (InputStream check = resolver.openInputStream(entry.getValue())) {
                     if (check != null && Arrays.equals(hash, VerifiedCopy.digest(check, cancelled))) return false;
                 }
