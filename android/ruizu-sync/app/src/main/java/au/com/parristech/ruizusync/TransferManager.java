@@ -8,6 +8,7 @@ import android.os.PowerManager;
 
 import au.com.parristech.ruizusync.audio.AudioTranscoder;
 import au.com.parristech.ruizusync.core.ByteFormat;
+import au.com.parristech.ruizusync.SafTransfer;
 import au.com.parristech.ruizusync.core.ConversionPolicy;
 import au.com.parristech.ruizusync.core.DestEntry;
 import au.com.parristech.ruizusync.core.DestIndex;
@@ -506,19 +507,15 @@ public final class TransferManager {
                 return;
             }
             if (request.duplicateMode == DuplicateMode.OVERWRITE) {
-                DestRepo.Node existingNode = nodesByPath.remove(duplicate.match.relPath.toLowerCase(Locale.ROOT));
-                if (existingNode != null) {
-                    destRepo.delete(existingNode);
-                    index.remove(duplicate.match.relPath);
-                    log("Overwriting: " + duplicate.match.relPath);
-                }
+                // Protect all existing audio even if the user selected overwrite.
+                log("Overwrite not permitted; existing player audio is preserved, saving a new copy");
             }
         }
 
         CopyResult result;
         try {
             result = copyWithRetry(sourceRepo, destRepo, item, sourceUri, sourceDisplayName,
-                    effectiveSize, targetDir, request.verifyAfterCopy);
+                    effectiveSize, request.destTree, targetDir, request.verifyAfterCopy);
         } catch (CancelledException e) {
             throw e;
         } catch (Exception e) {
@@ -528,6 +525,11 @@ public final class TransferManager {
             return;
         }
 
+        if (result.node == null) {
+            stats.finishFile(TransferStats.Outcome.DUPLICATE_SKIPPED);
+            log("Identical verified audio is already on the RUIZU: " + item.displayName);
+            return;
+        }
         stats.finishFile(TransferStats.Outcome.COPIED);
         copiedPaths.add(result.node.relPath);
         index.add(new DestEntry(result.node.relPath, result.node.name, result.bytes));
@@ -541,7 +543,7 @@ public final class TransferManager {
 
     private CopyResult copyWithRetry(SourceRepo sourceRepo, DestRepo destRepo, SourceItem item,
                                      Uri sourceUri, String sourceDisplayName, long effectiveSize,
-                                     DestRepo.Node targetDir, boolean verify) throws Exception {
+                                     Uri destTree, DestRepo.Node targetDir, boolean verify) throws Exception {
         String desiredName = FileNameSanitizer.fileName(sourceDisplayName);
         IOException lastError = null;
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -561,7 +563,7 @@ public final class TransferManager {
             }
             try {
                 return copyOnce(sourceRepo, destRepo, item, sourceUri, sourceDisplayName, effectiveSize,
-                        targetDir, targetName, verify);
+                        destTree, targetDir, targetName, verify);
             } catch (CancelledException e) {
                 throw e;
             } catch (IOException e) {
@@ -576,51 +578,34 @@ public final class TransferManager {
 
     private CopyResult copyOnce(SourceRepo sourceRepo, DestRepo destRepo, SourceItem item,
                                 Uri sourceUri, String sourceDisplayName, long effectiveSize,
-                                DestRepo.Node targetDir, String targetName, boolean verify) throws Exception {
+                                Uri destTree, DestRepo.Node targetDir, String targetName,
+                                boolean verify) throws Exception {
+        // Verified publishing stages in an owned .part file, closes/reads back with SHA-256,
+        // then renames. Existing music, podcasts and .LIB files are never deleted or overwritten.
         checkFreeSpace(effectiveSize);
-        DestRepo.Node created = destRepo.createFile(targetDir, targetName,
-                MediaTypes.mimeTypeFor(sourceDisplayName));
-        long written = 0;
-        boolean complete = false;
-        try {
-            MessageDigest digest = verify ? newDigest() : null;
-            try (InputStream in = sourceRepo.open(sourceUri);
-                 OutputStream out = destRepo.openWrite(created)) {
-                byte[] buffer = new byte[256 * 1024];
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    checkCancelled();
-                    out.write(buffer, 0, read);
-                    if (digest != null) {
-                        digest.update(buffer, 0, read);
-                    }
-                    written += read;
-                    stats.addBytes(read);
-                    deliver(false);
-                }
-                out.flush();
-            }
-            if (digest != null) {
-                String expected = HashUtil.toHex(digest.digest());
-                String actual = destRepo.hash(created);
-                if (actual == null) {
-                    throw new IOException("Could not read back " + created.name + " to verify it");
-                }
-                if (!actual.equalsIgnoreCase(expected)) {
-                    throw new IOException("Verification failed: " + created.name + " differs after writing");
-                }
-            }
-            complete = true;
-            return new CopyResult(created, written);
+        final long[] previous = {0L};
+        final boolean published;
+        try (InputStream in = sourceRepo.open(sourceUri)) {
+            published = new SafTransfer(context, () -> cancelRequested, targetDir.docId,
+                    false).transfer(in, destTree, targetName, effectiveSize, (bytes, total) -> {
+                        stats.addBytes(bytes - previous[0]);
+                        previous[0] = bytes;
+                        deliver(false);
+                    });
+        } catch (java.io.InterruptedIOException error) {
+            if (cancelRequested) throw new CancelledException();
+            throw error;
         } finally {
-            if (!complete) {
-                try {
-                    destRepo.delete(created);
-                } catch (Throwable ignored) {
-                    // Leaving a partial file behind is worse, but this is best effort.
-                }
-            }
+            destRepo.invalidate();
         }
+        if (!published) return new CopyResult(null, 0L);
+        DestRepo.Node created = destRepo.findChild(targetDir, targetName);
+        if (created == null) {
+            throw new IOException("Verified audio was published but the USB provider did not "
+                    + "refresh: " + targetName + ". Rescan before trying again.");
+        }
+        long bytes = created.size >= 0 ? created.size : Math.max(0L, effectiveSize);
+        return new CopyResult(created, bytes);
     }
 
     private void checkFreeSpace(long neededBytes) throws IOException {
@@ -680,7 +665,8 @@ public final class TransferManager {
                 String content = PlaylistWriter.buildM3u(names);
                 DestRepo.Node existing = destRepo.findChild(dir, PlaylistWriter.DEFAULT_NAME);
                 if (existing != null) {
-                    destRepo.delete(existing);
+                    log("Existing playlist preserved in " + where + "; not overwriting it");
+                    continue;
                 }
                 DestRepo.Node playlist = destRepo.createFile(dir, PlaylistWriter.DEFAULT_NAME,
                         PlaylistWriter.mimeType());
@@ -703,7 +689,8 @@ public final class TransferManager {
         try {
             DestRepo.Node existing = destRepo.findChild(destRepo.root(), fileName);
             if (existing != null) {
-                destRepo.delete(existing);
+                fileName = destRepo.uniqueName(destRepo.root(), fileName);
+                log("Preserved existing playlist; writing " + fileName);
             }
             DestRepo.Node playlist = destRepo.createFile(destRepo.root(), fileName,
                     PlaylistWriter.mimeType());
