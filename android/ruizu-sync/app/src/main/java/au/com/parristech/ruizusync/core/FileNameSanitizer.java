@@ -63,9 +63,6 @@ public final class FileNameSanitizer {
             }
             out = out.substring(0, cut).trim();
         }
-        while (out.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 180) {
-            out = out.substring(0, out.offsetByCodePoints(out.length(), -1));
-        }
         if (RESERVED_NAMES.contains(out.toLowerCase(Locale.ROOT))) {
             out = "_" + out;
         }

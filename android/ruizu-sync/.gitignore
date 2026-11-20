@@ -1,7 +1,2 @@
 .build/
 dist/
-*.jks
-*.keystore
-.gradle/
-**/build/
-local.properties

@@ -57,36 +57,103 @@ public final class FeedScanner {
         if (xml == null || xml.isEmpty()) {
             return Collections.emptyList();
         }
-        String lower = xml.toLowerCase(Locale.ROOT);
-        List<Episode> episodes = new ArrayList<>();
-        int cursor = 0;
-        while (episodes.size() < MAX_EPISODES) {
-            int itemStart = indexOfFrom(ITEM_TAG, xml, cursor);
-            int entryStart = indexOfFrom(ENTRY_TAG, xml, cursor);
-            final int start;
-            final String tag;
-            if (itemStart >= 0 && (entryStart < 0 || itemStart < entryStart)) {
-                start = itemStart;
-                tag = "item";
-            } else if (entryStart >= 0) {
-                start = entryStart;
-                tag = "entry";
-            } else {
-                break;
-            }
-            int end = lower.indexOf("</" + tag, start);
-            if (end < 0) {
-                break;
-            }
-            String block = xml.substring(start, end);
-            cursor = end + 3;
-            String title = cleanText(extractTitle(block));
-            Episode episode = "item".equals(tag) ? fromEnclosure(block, title) : fromAtomLink(block, title);
-            if (episode != null) {
-                episodes.add(episode);
-            }
+        StreamScanner scanner = new StreamScanner();
+        scanner.feed(xml);
+        return scanner.episodes();
+    }
+
+    /**
+     * Incremental feed scanner. Podcast feeds (for example long-running shows with thousands of
+     * episodes) can be tens of megabytes, so the app streams the document and stops as soon as
+     * enough episodes are found instead of buffering the whole file.
+     */
+    public static final class StreamScanner {
+        private static final int COMPACT_THRESHOLD = 64 * 1024;
+
+        private final StringBuilder buffer = new StringBuilder();
+        private final StringBuilder lowerBuffer = new StringBuilder();
+        private final List<Episode> episodes = new ArrayList<>();
+        private int cursor;
+
+        public boolean done() {
+            return episodes.size() >= MAX_EPISODES;
         }
-        return episodes;
+
+        public int count() {
+            return episodes.size();
+        }
+
+        public void feed(CharSequence chunk) {
+            if (chunk == null || chunk.length() == 0 || done()) {
+                return;
+            }
+            buffer.append(chunk);
+            appendLower(lowerBuffer, chunk);
+            drain();
+        }
+
+        public void feed(char[] chars, int offset, int length) {
+            if (length <= 0 || done()) {
+                return;
+            }
+            buffer.append(chars, offset, length);
+            for (int i = offset; i < offset + length; i++) {
+                char c = chars[i];
+                lowerBuffer.append(c >= 'A' && c <= 'Z' ? (char) (c + 32) : c);
+            }
+            drain();
+        }
+
+        public List<Episode> episodes() {
+            drain();
+            return Collections.unmodifiableList(new ArrayList<>(episodes));
+        }
+
+        private void drain() {
+            while (!done()) {
+                int itemStart = indexOfFrom(ITEM_TAG, lowerBuffer, cursor);
+                int entryStart = indexOfFrom(ENTRY_TAG, lowerBuffer, cursor);
+                final int start;
+                final String tag;
+                if (itemStart >= 0 && (entryStart < 0 || itemStart < entryStart)) {
+                    start = itemStart;
+                    tag = "item";
+                } else if (entryStart >= 0) {
+                    start = entryStart;
+                    tag = "entry";
+                } else {
+                    break;
+                }
+                int end = lowerBuffer.indexOf("</" + tag, start);
+                if (end < 0) {
+                    break; // wait for the rest of this item
+                }
+                String block = buffer.substring(start, end);
+                cursor = end + 3;
+                String title = cleanText(extractTitle(block));
+                Episode episode = "item".equals(tag) ? fromEnclosure(block, title) : fromAtomLink(block, title);
+                if (episode != null) {
+                    episodes.add(episode);
+                }
+            }
+            compact();
+        }
+
+        private void compact() {
+            if (cursor < COMPACT_THRESHOLD) {
+                return;
+            }
+            buffer.delete(0, cursor);
+            lowerBuffer.delete(0, cursor);
+            cursor = 0;
+        }
+    }
+
+    private static void appendLower(StringBuilder lower, CharSequence chunk) {
+        for (int i = 0; i < chunk.length(); i++) {
+            char c = chunk.charAt(i);
+            lower.append(c >= 'A' && c <= 'Z' ? (char) (c + 32) : c);
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -281,7 +348,7 @@ public final class FeedScanner {
         return matcher.group(4);
     }
 
-    private static int indexOfFrom(Pattern pattern, String text, int from) {
+    private static int indexOfFrom(Pattern pattern, CharSequence text, int from) {
         Matcher matcher = pattern.matcher(text);
         return matcher.find(from) ? matcher.start() : -1;
     }

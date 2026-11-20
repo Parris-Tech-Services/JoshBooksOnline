@@ -2,6 +2,7 @@ package au.com.parristech.ruizusync.usb;
 
 import android.content.Context;
 import android.content.Intent;
+import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Environment;
 import android.os.storage.StorageManager;
@@ -30,6 +31,36 @@ public final class UsbVolumes {
     }
 
     private UsbVolumes() {
+    }
+
+    /** USB volumes plus the number of attached USB devices that are not mounted as storage. */
+    public static final class Detection {
+        public final List<Info> volumes;
+        public final int attachedUsbDevices;
+
+        Detection(List<Info> volumes, int attachedUsbDevices) {
+            this.volumes = volumes;
+            this.attachedUsbDevices = attachedUsbDevices;
+        }
+
+        /** True when a player is attached but only exposes MTP/PTP, which SAF cannot mount. */
+        public boolean looksLikeMtpOnly() {
+            return volumes.isEmpty() && attachedUsbDevices > 0;
+        }
+    }
+
+    public static Detection detectEnvironment(Context context) {
+        List<Info> volumes = detect(context);
+        int devices = 0;
+        try {
+            UsbManager manager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
+            if (manager != null) {
+                devices = manager.getDeviceList().size();
+            }
+        } catch (Throwable ignored) {
+            // Listing USB devices is best effort.
+        }
+        return new Detection(volumes, devices);
     }
 
     public static List<Info> detect(Context context) {

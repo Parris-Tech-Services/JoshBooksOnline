@@ -28,7 +28,11 @@ public final class AppState {
     private Uri destTree;
     private String destLabel = "";
     private FolderPlanner.OrganiseMode organiseMode = FolderPlanner.OrganiseMode.FLAT;
-    private DuplicateMode duplicateMode = DuplicateMode.SKIP_EXACT;
+    private DuplicateMode duplicateMode = DuplicateMode.SKIP_FAST;
+    private boolean verifyAfterCopy = true;
+    private boolean duplicatesInTargetFolderOnly = false;
+    private boolean writePlaylists = false;
+    private boolean convertToMp3 = false;
 
     private AppState() {
     }
@@ -97,6 +101,38 @@ public final class AppState {
     }
 
     public synchronized void setDuplicateMode(DuplicateMode mode) {
-        duplicateMode = mode == null ? DuplicateMode.SKIP_EXACT : mode;
+        duplicateMode = mode == null ? DuplicateMode.SKIP_FAST : mode;
+    }
+
+    public synchronized boolean verifyAfterCopy() {
+        return verifyAfterCopy;
+    }
+
+    public synchronized void setVerifyAfterCopy(boolean value) {
+        verifyAfterCopy = value;
+    }
+
+    public synchronized boolean duplicatesInTargetFolderOnly() {
+        return duplicatesInTargetFolderOnly;
+    }
+
+    public synchronized void setDuplicatesInTargetFolderOnly(boolean value) {
+        duplicatesInTargetFolderOnly = value;
+    }
+
+    public synchronized boolean writePlaylists() {
+        return writePlaylists;
+    }
+
+    public synchronized void setWritePlaylists(boolean value) {
+        writePlaylists = value;
+    }
+
+    public synchronized boolean convertToMp3() {
+        return convertToMp3;
+    }
+
+    public synchronized void setConvertToMp3(boolean value) {
+        convertToMp3 = value;
     }
 }

@@ -102,6 +102,37 @@ public class FeedScannerTest {
     }
 
     @Test
+    public void streamsChunkedFeeds() {
+        FeedScanner.StreamScanner scanner = new FeedScanner.StreamScanner();
+        for (int i = 0; i < RSS_FEED.length(); i += 5) {
+            scanner.feed(RSS_FEED.substring(i, Math.min(RSS_FEED.length(), i + 5)));
+        }
+        List<FeedScanner.Episode> episodes = scanner.episodes();
+        assertEquals(2, episodes.size());
+        assertEquals("Episode 1", episodes.get(0).title);
+        assertEquals(12345, episodes.get(0).size);
+    }
+
+    @Test
+    public void stopsEarlyOnVeryLargeFeeds() {
+        StringBuilder feed = new StringBuilder("<rss><channel>");
+        for (int i = 0; i < 400; i++) {
+            feed.append("<item><title>Episode ").append(i).append("</title>")
+                    .append("<enclosure url=\"https://cdn.example.com/e").append(i)
+                    .append(".mp3\" type=\"audio/mpeg\"/></item>");
+        }
+        feed.append("</channel></rss>");
+
+        FeedScanner.StreamScanner scanner = new FeedScanner.StreamScanner();
+        for (int i = 0; i < feed.length() && !scanner.done(); i += 2048) {
+            scanner.feed(feed.substring(i, Math.min(feed.length(), i + 2048)));
+        }
+        assertTrue(scanner.done());
+        assertEquals(FeedScanner.MAX_EPISODES, scanner.count());
+        assertEquals(FeedScanner.MAX_EPISODES, scanner.episodes().size());
+    }
+
+    @Test
     public void emptyAndMalformedFeedsAreSafe() {
         assertTrue(FeedScanner.scan(null).isEmpty());
         assertTrue(FeedScanner.scan("").isEmpty());

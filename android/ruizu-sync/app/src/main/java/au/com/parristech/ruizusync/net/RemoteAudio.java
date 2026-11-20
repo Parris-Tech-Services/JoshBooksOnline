@@ -4,25 +4,33 @@ import android.net.Uri;
 
 import au.com.parristech.ruizusync.core.MediaTypes;
 
-import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 
 /**
  * HTTPS audio and feed fetching for podcast episodes and direct audio links.
  *
  * <p>Only HTTPS is allowed, redirects are followed manually (HTTPS-only at every hop), responses
- * must be audio, and transfers are capped at FAT32 4 GiB. Streaming services (Spotify/YouTube) and
+ * must be audio, and transfers are capped at 2 GB. Streaming services (Spotify/YouTube) and
  * playlists are rejected: this app copies audio files, it never extracts or bypasses DRM.</p>
  */
 public final class RemoteAudio {
 
-    public static final long MAX_BYTES = au.com.parristech.ruizusync.VerifiedCopy.MAX_BYTES;
-    public static final int MAX_FEED_BYTES = 5 * 1024 * 1024;
+    public static final long MAX_BYTES = 2L * 1024 * 1024 * 1024;
+    /**
+     * Character budget for a feed download. Feeds are streamed and parsing stops as soon as
+     * {@link FeedScanner#MAX_EPISODES} episodes are collected, so this is only a safety valve for
+     * pathological documents - long-running shows regularly ship 10-30 MB feeds.
+     */
+    public static final int MAX_FEED_CHARS = 32 * 1024 * 1024;
 
     private static final int MAX_REDIRECTS = 5;
     private static final int CONNECT_TIMEOUT_MS = 15000;
@@ -102,13 +110,17 @@ public final class RemoteAudio {
         long length = connection.getContentLengthLong();
         if (length > MAX_BYTES) {
             connection.disconnect();
-            throw new IOException("File exceeds the FAT32 4 GiB transfer limit");
+            throw new IOException("File exceeds the 2 GB transfer limit");
         }
         return new ConnectionStream(connection.getInputStream(), connection);
     }
 
-    /** Fetches a podcast feed (or similar text document) with a hard size cap. */
-    public static String fetchText(String url, int maxBytes) throws IOException {
+    /**
+     * Streams a podcast feed and returns the episodes found so far. Reading stops early once
+     * {@link FeedScanner#MAX_EPISODES} episodes are collected or the character budget is spent,
+     * so large feeds (e.g. long-running shows with thousands of episodes) load in seconds.
+     */
+    public static List<FeedScanner.Episode> fetchFeedEpisodes(String url, int maxChars) throws IOException {
         HttpURLConnection connection = connect(new URL(url), "GET");
         try {
             int code = connection.getResponseCode();
@@ -119,20 +131,88 @@ public final class RemoteAudio {
             if (!mime.isEmpty() && !isFeedContentType(mime)) {
                 throw new IOException("The link is not a podcast feed (" + mime + ")");
             }
-            try (InputStream in = connection.getInputStream()) {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
+            FeedScanner.StreamScanner scanner = new FeedScanner.StreamScanner();
+            try (Reader reader = new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)) {
+                char[] buffer = new char[16 * 1024];
+                long total = 0;
+                int read;
+                while ((read = reader.read(buffer)) != -1) {
+                    total += read;
+                    if (total > maxChars) {
+                        break; // partial feed is fine: keep the episodes already parsed
+                    }
+                    scanner.feed(buffer, 0, read);
+                    if (scanner.done()) {
+                        break;
+                    }
+                }
+            }
+            return scanner.episodes();
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    public interface DownloadProgress {
+        void onProgress(long done, long total);
+    }
+
+    /**
+     * Downloads an audio file to cache with HTTP Range resume: an interrupted download continues
+     * from the bytes already on disk. Returns the number of bytes in the finished file.
+     */
+    public static long downloadToFile(String url, java.io.File target, DownloadProgress progress)
+            throws IOException {
+        java.io.File part = new java.io.File(target.getPath() + ".part");
+        long existing = part.isFile() ? part.length() : 0L;
+        HttpURLConnection connection = connect(new URL(url), "GET",
+                existing > 0 ? "bytes=" + existing + "-" : null);
+        try {
+            int code = connection.getResponseCode();
+            boolean append = code == 206 && existing > 0;
+            if (code != 200 && code != 206) {
+                throw new IOException("Download failed with HTTP " + code);
+            }
+            String mime = normalizeMime(connection.getContentType());
+            if (!isAudioContentType(mime)) {
+                throw new IOException("The link did not return an audio file ("
+                        + (mime.isEmpty() ? "unknown content type" : mime) + ")");
+            }
+            long total;
+            if (append) {
+                long tail = parseContentRange(connection.getHeaderField("Content-Range"));
+                total = tail > 0 ? tail : existing + connection.getContentLengthLong();
+            } else {
+                existing = 0;
+                total = connection.getContentLengthLong();
+            }
+            if (total > MAX_BYTES) {
+                throw new IOException("File exceeds the 2 GB transfer limit");
+            }
+            long written = existing;
+            try (InputStream in = connection.getInputStream();
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(part, append)) {
                 byte[] buffer = new byte[64 * 1024];
-                int total = 0;
                 int read;
                 while ((read = in.read(buffer)) != -1) {
-                    total += read;
-                    if (total > maxBytes) {
-                        throw new IOException("Feed is larger than " + (maxBytes / 1024) + " KB");
+                    written += read;
+                    if (written > MAX_BYTES) {
+                        throw new IOException("File exceeds the 2 GB transfer limit");
                     }
                     out.write(buffer, 0, read);
+                    if (progress != null) {
+                        progress.onProgress(written, total);
+                    }
                 }
-                return out.toString("UTF-8");
+                out.getFD().sync();
             }
+            if (target.exists() && !target.delete()) {
+                throw new IOException("Cannot replace " + target.getName());
+            }
+            if (!part.renameTo(target)) {
+                throw new IOException("Cannot finish writing " + target.getName());
+            }
+            return written;
         } finally {
             connection.disconnect();
         }
@@ -218,6 +298,10 @@ public final class RemoteAudio {
     }
 
     private static HttpURLConnection connect(URL url, String method) throws IOException {
+        return connect(url, method, null);
+    }
+
+    private static HttpURLConnection connect(URL url, String method, String range) throws IOException {
         URL current = url;
         for (int attempt = 0; attempt <= MAX_REDIRECTS; attempt++) {
             String protocol = current.getProtocol();
@@ -230,6 +314,9 @@ public final class RemoteAudio {
             connection.setReadTimeout(READ_TIMEOUT_MS);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("User-Agent", USER_AGENT);
+            if (range != null) {
+                connection.setRequestProperty("Range", range);
+            }
             int code = connection.getResponseCode();
             if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
                 String location = connection.getHeaderField("Location");
@@ -275,7 +362,7 @@ public final class RemoteAudio {
         private void count(long bytes) throws IOException {
             read += bytes;
             if (read > MAX_BYTES) {
-                throw new IOException("File exceeds the FAT32 4 GiB transfer limit");
+                throw new IOException("File exceeds the 2 GB transfer limit");
             }
         }
 

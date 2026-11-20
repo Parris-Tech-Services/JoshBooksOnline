@@ -1,32 +1,30 @@
 plugins { id 'com.android.application' }
+
 android {
     namespace 'au.com.parristech.ruizusync'
     compileSdk 35
-    buildToolsVersion "35.0.0"
+
     defaultConfig {
         applicationId 'au.com.parristech.ruizusync'
         minSdk 26
+        // targetSdk 35: Android 15 enforces edge-to-edge, so MainActivity applies window insets.
         targetSdk 35
-        versionCode 3
-        versionName '1.1.0'
-        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        versionCode 4
+        versionName '1.2.0'
     }
-    // Fault provider is installed in a separate test-only target variant, never the distributed debug APK.
-    buildTypes {
-        safTest {
-            initWith debug
-            applicationIdSuffix '.saftest'
-            matchingFallbacks = ['debug']
-        }
-    }
-    testBuildType 'safTest'
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
 }
+
 dependencies {
+    // Pure-Java LAME port: MP3 encoding without native code or NDK.
+    implementation files('libs/jump3r-1.0.5.jar')
     testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test:runner:1.6.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
