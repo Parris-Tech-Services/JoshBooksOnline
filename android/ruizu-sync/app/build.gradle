@@ -5,12 +5,12 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'au.com.parristech.ruizusync'
+        applicationId 'au.com.parristech.ruizusync.fresh'
         minSdk 26
         // targetSdk 35: Android 15 enforces edge-to-edge, so MainActivity applies window insets.
         targetSdk 35
-        versionCode 4
-        versionName '1.2.0'
+        versionCode 5
+        versionName '1.2.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
