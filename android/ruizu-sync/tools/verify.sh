@@ -31,12 +31,18 @@ grep -q 'resources.arsc' "$WORK/zip.txt" && ok "resources.arsc present" || fail 
 report "dex header"
 unzip -p "$APK" classes.dex > "$WORK/classes.dex"
 head -c 4 "$WORK/classes.dex" | grep -q 'dex' && ok "dex magic valid" || fail "bad dex magic"
-strings "$WORK/classes.dex" > "$WORK/dex-strings.txt"
+# Class names live in the dex string table as ASCII type descriptors; grep -a is used instead
+# of `strings` because minimal runner images may not ship binutils.
 for cls in ui/MainActivity TransferService TransferManager net/RemoteAudio net/FeedScanner \
-           core/DuplicateMatcher core/FolderPlanner core/MediaTypes core/FolderPlanner\$OrganiseMode; do
-  grep -qF "au/com/parristech/ruizusync/$cls" "$WORK/dex-strings.txt" \
+           core/DuplicateMatcher core/FolderPlanner core/MediaTypes 'core/FolderPlanner$OrganiseMode'; do
+  grep -a -qF "Lau/com/parristech/ruizusync/$cls;" "$WORK/classes.dex" \
     && ok "$cls in dex" || fail "$cls missing from dex"
 done
+if [ "$FAILURES" -gt 0 ]; then
+  echo "-- dex diagnostics --"
+  grep -a -o 'Lau/com/parristech/ruizusync/[A-Za-z0-9_$/]*;' "$WORK/classes.dex" | sort -u | head -10 || true
+  command -v strings >/dev/null 2>&1 && echo "strings available" || echo "strings NOT available"
+fi
 
 report "zipalign"
 zipalign -c -v 4 "$APK" > "$WORK/zipalign.txt" 2>&1 && ok "4-byte aligned" || fail "not 4-byte aligned"
@@ -58,12 +64,18 @@ aapt2 dump badging "$APK" > "$WORK/badging.txt" 2>&1
 grep -E "^(package:|sdkVersion|targetSdkVersion|application-label|launchable-activity|uses-permission)" "$WORK/badging.txt" || fail "badging failed"
 grep -qF "package: name='au.com.parristech.ruizusync'" "$WORK/badging.txt" \
   && ok "package name correct" || fail "package name wrong"
-grep -qF "sdkVersion:'26'" "$WORK/badging.txt" && ok "minSdk 26" || fail "unexpected minSdk"
-grep -qF "targetSdkVersion:'34'" "$WORK/badging.txt" && ok "targetSdk 34" || fail "unexpected targetSdk"
-
 report "manifest checks"
 aapt2 dump xmltree --file AndroidManifest.xml "$APK" > "$WORK/manifest.txt" 2>&1 \
   || fail "cannot dump manifest xmltree"
+if grep -qF "sdkVersion:'26'" "$WORK/badging.txt" \
+   || grep -qE 'minSdkVersion\(0x[0-9a-f]+\)=\(type 0x10\)0x1a' "$WORK/manifest.txt"; then
+  ok "minSdk 26"
+else
+  fail "unexpected minSdk"
+  grep -i 'sdkversion' "$WORK/badging.txt" || true
+fi
+grep -qF "targetSdkVersion:'34'" "$WORK/badging.txt" && ok "targetSdk 34" || fail "unexpected targetSdk"
+
 grep -q 'android:exported' "$WORK/manifest.txt" && ok "exported attribute present" || fail "exported attribute missing"
 grep -q 'foregroundServiceType' "$WORK/manifest.txt" && ok "foregroundServiceType present" || fail "foregroundServiceType missing"
 grep -q 'FOREGROUND_SERVICE_DATA_SYNC' "$WORK/manifest.txt" && ok "FOREGROUND_SERVICE_DATA_SYNC permission" || fail "data-sync FGS permission missing"

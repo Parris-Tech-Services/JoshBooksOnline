@@ -47,6 +47,7 @@ jobs:
           bash ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ruizu-sync-debug-apk
