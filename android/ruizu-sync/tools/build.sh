@@ -46,7 +46,7 @@ aapt2 link \
 echo "==> 3/7 Compiling Java (javac)"
 find "$APP/java" "$BUILD/gen" -name '*.java' | sort > "$BUILD/sources.txt"
 LIB_CP=""
-for jar in "$ROOT"/libs/*.jar; do
+for jar in "$ROOT"/app/libs/*.jar; do
   [ -f "$jar" ] && LIB_CP="$LIB_CP:$jar"
 done
 javac --release 17 -encoding UTF-8 -classpath "$SDK$LIB_CP" -d "$BUILD/classes" @"$BUILD/sources.txt"
@@ -54,7 +54,7 @@ javac --release 17 -encoding UTF-8 -classpath "$SDK$LIB_CP" -d "$BUILD/classes" 
 echo "==> 4/7 Dexing (official R8/D8)"
 find "$BUILD/classes" -name '*.class' | sort > "$BUILD/classes.txt"
 DEX_INPUTS=$(cat "$BUILD/classes.txt")
-for jar in "$ROOT"/libs/*.jar; do
+for jar in "$ROOT"/app/libs/*.jar; do
   [ -f "$jar" ] && DEX_INPUTS="$DEX_INPUTS $jar"
 done
 java -cp "$R8_JAR" com.android.tools.r8.D8 --release --min-api "$MIN_SDK" --lib "$SDK" \

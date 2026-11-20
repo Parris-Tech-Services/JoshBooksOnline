@@ -23,7 +23,7 @@ fi
 
 # The JVM-testable subset: no android.* imports.
 LIB_CP=""
-for jar in "$ROOT"/libs/*.jar; do
+for jar in "$ROOT"/app/libs/*.jar; do
   [ -f "$jar" ] && LIB_CP="$LIB_CP:$jar"
 done
 find "$SRC/core" "$SRC/net/FeedScanner.java" "$SRC/audio/Mp3Encoder.java" "$SRC/TransferUtils.java" \
