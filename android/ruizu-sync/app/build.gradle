@@ -1,0 +1,32 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'au.com.parristech.ruizusync'
+    compileSdk 35
+    buildToolsVersion "35.0.0"
+    defaultConfig {
+        applicationId 'au.com.parristech.ruizusync'
+        minSdk 26
+        targetSdk 35
+        versionCode 3
+        versionName '1.1.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    // Fault provider is installed in a separate test-only target variant, never the distributed debug APK.
+    buildTypes {
+        safTest {
+            initWith debug
+            applicationIdSuffix '.saftest'
+            matchingFallbacks = ['debug']
+        }
+    }
+    testBuildType 'safTest'
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

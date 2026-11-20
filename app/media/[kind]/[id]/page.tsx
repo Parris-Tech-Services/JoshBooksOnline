@@ -1,5 +1,7 @@
 'use client';
 
+import { RuizuExport } from '@/components/RuizuExport';
+
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
@@ -359,6 +361,10 @@ export default function MediaDetailPage() {
                   </div>
                 ))}
             </dl>
+
+            {detail.kind === 'audiobook' && detail.item.tracks && (
+              <RuizuExport key={detail.item.id} title={detail.item.title} tracks={detail.item.tracks} />
+            )}
 
             {detail.kind === 'audiobook' && (detail.item.tracks?.length ?? 0) > 1 && (
               <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
