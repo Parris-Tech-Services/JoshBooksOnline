@@ -4,7 +4,7 @@ Native Java companion for Samsung/Android using Android's Storage Access Framewo
 
 ## Planned features
 
-See the [numbered feature to-do list](TODO.md) for all ten proposed additions, comparison-app quotes, source links and acceptance checks. These are planned features, not current app capabilities.
+See the [numbered feature to-do list](TODO.md) for all eleven proposed additions, comparison-app quotes, source links, safe-removal guidance and acceptance checks. These are planned features, not current app capabilities.
 
 ## Install
 

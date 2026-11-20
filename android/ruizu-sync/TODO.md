@@ -2,7 +2,7 @@
 
 Status: planned work, compared with the delivered 1.1.0 app. An unchecked item is not an implemented or verified feature. Keep these numbers stable when adding progress notes.
 
-Purpose: reduce repeated file selection, prepare playable audio before USB connection, and make music, podcasts and audiobooks easier for Josh to manage. Reuse the existing SAF transfer manager, verified writer and Android share flow. This task records the roadmap only; it does not implement the features below. Completion of this documentation task means all ten agreed features, their sources and acceptance checks are recorded and linked from the app README.
+Purpose: reduce repeated file selection, prepare playable audio before USB connection, and make music, podcasts and audiobooks easier for Josh to manage. Reuse the existing SAF transfer manager, verified writer and Android share flow. This task records the roadmap only; it does not implement the features below. Completion of this documentation task means all eleven agreed features, their sources and acceptance checks are recorded and linked from the app README.
 
 ## Numbered backlog
 
@@ -45,6 +45,10 @@ Purpose: reduce repeated file selection, prepare playable audio before USB conne
 10. [ ] **Player-compatible cover artwork.** Embed, resize or convert artwork in transferred copies according to a verified device profile. Preserve the original audio and artwork; do not modify the player's existing database.
     - Comparison: **MediaMonkey** offers **“Copy Artwork to file tags”**. [Official sync-profile tagging documentation](https://www.mediamonkey.com/wiki/WebHelp:Exporting_Tracks#Tagging).
     - Done when: tests cover missing, malformed and oversized images and metadata preservation; representative covers display correctly on the exact RUIZU model. Report unsupported artwork features honestly.
+
+11. [ ] **Clear safe removal / eject guidance in the app.** Add a prominent **Safely remove player** action beside the transfer controls so it is obvious how to disconnect the RUIZU. Show whether copying, verification or cleanup is still using the player; explain when to wait and how to use Samsung/Android's system USB eject control.
+    - Source: **Josh's app feedback:** “It unclear in the app how to safely remove the ruizu player”. This is a usability requirement from actual use, not a comparison-app claim.
+    - Done when: the action is discoverable without scrolling through setup notes; removal is blocked or clearly unavailable while any player I/O is active; the app opens a supported system eject/storage screen where possible and otherwise gives clear Samsung My Files/system-storage steps. Do not claim that cancelling a job, closing the app or finishing a copy has ejected the device. Distinguish **transfer finished**, **eject still required**, **system-confirmed ejected**, and **disconnected / eject status unavailable** without inventing confirmation. Test active-copy, read-back verification, pending cleanup, completed, cancelled and disconnected states; verify the actual eject flow on the Galaxy A55 and physical RUIZU. No root, formatting, forced unmounting or library database changes.
 
 ## Suggested implementation order
 
