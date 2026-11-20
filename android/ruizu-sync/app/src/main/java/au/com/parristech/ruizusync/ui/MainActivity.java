@@ -48,6 +48,8 @@ import au.com.parristech.ruizusync.TransferUtils;
 import au.com.parristech.ruizusync.TransferManager;
 import au.com.parristech.ruizusync.TransferService;
 import au.com.parristech.ruizusync.core.ByteFormat;
+import au.com.parristech.ruizusync.core.DestEntry;
+import au.com.parristech.ruizusync.core.LibraryComparison;
 import au.com.parristech.ruizusync.core.DuplicateMode;
 import au.com.parristech.ruizusync.core.FolderPlanner;
 import au.com.parristech.ruizusync.core.FileNameSanitizer;
@@ -125,6 +127,8 @@ public final class MainActivity extends Activity implements TransferManager.List
     private CheckBox convertCheck;
     private Button retryButton;
     private Button copyLogButton;
+    private Button auditButton;
+    private Button safelyRemoveButton;
     private TextView lastRunText;
     private ScrollView contentScroll;
     private EditText playlistNameInput;
@@ -431,6 +435,26 @@ public final class MainActivity extends Activity implements TransferManager.List
         planCard.addView(planEnabledCheck, margins(0, dp(6), 0, 0));
         root.addView(planCard);
 
+        root.addView(sectionHeader("8 · What's on my RUIZU?"));
+        LinearLayout auditCard = card();
+        TextView auditHelp = label(
+                "Scan every audio file on the selected player folder. Add music or podcasts from "
+                + "your phone or Google Drive above to see what's missing. The scan is read-only.",
+                13, false);
+        auditHelp.setTextColor(getColor(R.color.text_muted));
+        auditCard.addView(auditHelp);
+        auditButton = primaryButton("Scan player & compare library", v -> auditPlayerLibrary());
+        auditCard.addView(auditButton, margins(0, dp(8), 0, 0));
+        safelyRemoveButton = secondaryButton("Safely remove RUIZU", v -> showSafeRemovalGuide());
+        auditCard.addView(safelyRemoveButton, margins(0, dp(8), 0, 0));
+        TextView auditNote = label(
+                "For a complete inventory, choose USB storage 1 at its root, rather than just "
+                + "Music or Podcasts. Possible matches are kept separate from confirmed copies.",
+                12, false);
+        auditNote.setTextColor(getColor(R.color.text_muted));
+        auditCard.addView(auditNote, margins(0, dp(6), 0, 0));
+        root.addView(auditCard);
+
         estimate = label("", 13, false);
         estimate.setTextColor(getColor(R.color.text_muted));
         root.addView(estimate, margins(0, dp(14), 0, dp(8)));
@@ -631,6 +655,8 @@ public final class MainActivity extends Activity implements TransferManager.List
         addFilesButton.setEnabled(!busy);
         addFolderButton.setEnabled(!busy);
         chooseDestButton.setEnabled(!busy);
+        if (auditButton != null) auditButton.setEnabled(!busy && !running && dest != null);
+        if (safelyRemoveButton != null) safelyRemoveButton.setEnabled(!busy);
     }
 
     private void render(TransferManager.Snapshot snapshot) {
@@ -1125,6 +1151,145 @@ public final class MainActivity extends Activity implements TransferManager.List
         render(manager.snapshot());
     }
 
+
+    // ---------------------------------------------------------------------------------------
+    // Read-only RUIZU library inventory and Drive/phone missing-track comparison
+    // ---------------------------------------------------------------------------------------
+
+    private void auditPlayerLibrary() {
+        if (busy || manager.isRunning()) {
+            toast("Finish the current operation before scanning the player");
+            return;
+        }
+        final Uri dest = state.destinationTree();
+        if (dest == null) {
+            toast("Choose the RUIZU player folder first");
+            return;
+        }
+        final List<SourceItem> selections = state.sources();
+        setBusy(true, "Reading the player library…");
+        renderSelections();
+        ioExecutor.execute(() -> {
+            try {
+                DestRepo repo = new DestRepo(getApplicationContext(), dest);
+                List<DestEntry> player = new ArrayList<>();
+                for (DestRepo.Node node : repo.walkFiles(60000)) {
+                    player.add(new DestEntry(node.relPath, node.name, node.size));
+                }
+
+                List<SourceItem> comparable = new ArrayList<>();
+                List<LibraryComparison.Track> tracks = new ArrayList<>();
+                for (SourceItem item : selections) {
+                    if (item.problem != null || !item.supportedFormat()) continue;
+                    String artist = "";
+                    String album = "";
+                    if (!RemoteAudio.isRemote(item.uri) && tracks.size() < 1000) {
+                        SourceRepo.TrackTags tags = sourceRepo.readTags(item.uri);
+                        if (tags.artist != null) artist = tags.artist;
+                        if (tags.album != null) album = tags.album;
+                    }
+                    StringBuilder folder = new StringBuilder(item.sourceFolder);
+                    for (String component : item.treeRelDirs) {
+                        if (folder.length() > 0) folder.append('/');
+                        folder.append(component);
+                    }
+                    tracks.add(new LibraryComparison.Track(item.displayName, item.size,
+                            artist, album, folder.toString()));
+                    comparable.add(item);
+                }
+                LibraryComparison.Result result = LibraryComparison.compare(tracks, player);
+                final boolean truncated = player.size() >= 60000;
+                mainHandler.post(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    setBusy(false, null);
+                    showLibraryAuditResult(result, comparable, truncated);
+                });
+            } catch (Throwable t) {
+                mainHandler.post(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    setBusy(false, null);
+                    toast("Player scan failed: " + describe(t));
+                });
+            }
+        });
+    }
+
+    private void showLibraryAuditResult(LibraryComparison.Result result,
+                                        List<SourceItem> comparable, boolean truncated) {
+        final String report = (truncated
+                ? "Warning: scan limit reached; inventory may be incomplete.\\n\\n" : "")
+                + result.report(100);
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this)
+                .setTitle("RUIZU library audit")
+                .setMessage(report)
+                .setNegativeButton("Close", (d, which) -> {})
+                .setNeutralButton("Share report", (d, which) -> {
+                    Intent share = new Intent(Intent.ACTION_SEND);
+                    share.setType("text/plain");
+                    share.putExtra(Intent.EXTRA_SUBJECT, "RUIZU library inventory");
+                    share.putExtra(Intent.EXTRA_TEXT,
+                            (truncated ? "Scan was truncated.\\n" : "") + result.report(5000));
+                    try {
+                        startActivity(Intent.createChooser(share, "Share RUIZU inventory"));
+                    } catch (ActivityNotFoundException e) {
+                        toast("No share app available");
+                    }
+                });
+        if (result.missing > 0) {
+            dialog.setPositiveButton("Queue missing", (d, which) -> {
+                List<SourceItem> missing = new ArrayList<>();
+                for (int i = 0; i < result.matches.size(); i++) {
+                    if (result.matches.get(i).status == LibraryComparison.Status.MISSING) {
+                        missing.add(comparable.get(i));
+                    }
+                }
+                state.clearSources();
+                state.addSources(missing);
+                renderSelections();
+                toast(missing.size() + " missing files queued; review and start transfer when ready");
+            });
+        }
+        dialog.show();
+    }
+
+    /**
+     * Storage Access Framework does not provide a general-purpose USB unmount API.
+     * Keep the wording truthful: a completed copy is NOT a confirmed system eject.
+     */
+    private void showSafeRemovalGuide() {
+        if (manager.isRunning() || busy) {
+            new AlertDialog.Builder(this)
+                    .setTitle("RUIZU is still in use")
+                    .setMessage("Wait until copying and verification finish, then use Samsung's "
+                            + "system eject action. Do not unplug during a transfer.")
+                    .setPositiveButton("OK", (d, which) -> {})
+                    .show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Safely remove your RUIZU")
+                .setMessage("RUIZU Sync is not copying files now, but it has NOT ejected the USB "
+                        + "device. Open Samsung My Files, find USB storage 1 and use its "
+                        + "three-dot menu to choose Unmount/Eject (if shown). Alternatively, "
+                        + "open Settings > Device care > Storage and use the eject control "
+                        + "beside USB storage. Wait for Samsung to confirm unmounting before "
+                        + "disconnecting the player.")
+                .setNegativeButton("Close", (d, which) -> {})
+                .setPositiveButton("Open My Files", (d, which) -> {
+                    try {
+                        Intent launch = getPackageManager().getLaunchIntentForPackage(
+                                "com.sec.android.app.myfiles");
+                        if (launch != null) {
+                            startActivity(launch);
+                        } else {
+                            startActivity(new Intent("android.settings.INTERNAL_STORAGE_SETTINGS"));
+                        }
+                    } catch (Throwable error) {
+                        toast("Open Samsung My Files manually to eject USB storage 1");
+                    }
+                }).show();
+    }
+
     // ---------------------------------------------------------------------------------------
     // USB detection
     // ---------------------------------------------------------------------------------------
@@ -1293,6 +1458,9 @@ public final class MainActivity extends Activity implements TransferManager.List
                 feedInput.setEnabled(!value);
             }
         }
+        if (auditButton != null) auditButton.setEnabled(!value && !manager.isRunning()
+                && state.destinationTree() != null);
+        if (safelyRemoveButton != null) safelyRemoveButton.setEnabled(!value);
         if (!value) {
             renderSelections();
         }
