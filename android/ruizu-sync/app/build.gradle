@@ -11,7 +11,18 @@ android {
         targetSdk 35
         versionCode 4
         versionName '1.2.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
+
+    // Main's isolated fake-USB provider remains test-only, not part of the debug APK.
+    buildTypes {
+        safTest {
+            initWith debug
+            applicationIdSuffix '.saftest'
+            matchingFallbacks = ['debug']
+        }
+    }
+    testBuildType 'safTest'
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -27,4 +38,6 @@ dependencies {
     // Pure-Java LAME port: MP3 encoding without native code or NDK.
     implementation files('libs/jump3r-1.0.5.jar')
     testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
