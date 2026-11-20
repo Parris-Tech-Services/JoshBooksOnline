@@ -3,9 +3,9 @@ name: RUIZU Sync Android APK
 on:
   push:
     branches: [main, "feature/ruizu-sync-*"]
-    paths: ["android/ruizu-sync/**", ".github/workflows/ruizu-sync-apk.yml"]
+    paths: ["android/ruizu-sync/**", ".github/workflows/ruizu-sync-apk.yml", ".github/scripts/emulator-smoke.sh"]
   pull_request:
-    paths: ["android/ruizu-sync/**", ".github/workflows/ruizu-sync-apk.yml"]
+    paths: ["android/ruizu-sync/**", ".github/workflows/ruizu-sync-apk.yml", ".github/scripts/emulator-smoke.sh"]
   workflow_dispatch:
 
 permissions:
