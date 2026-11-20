@@ -99,7 +99,7 @@ public final class SafTransfer {
                 if (!skipIdentical || !TransferUtils.isSupportedAudio(entry.getKey())) continue;
                 long existingSize = sizes.getOrDefault(entry.getValue(), -1L);
                 if (existingSize >= 0 && existingSize != written[0]) continue;
-                if (existingSize < 0 && !TransferUtils.isConflictName(name, entry.getKey())) continue;
+                if (existingSize < 0 && !entry.getKey().equalsIgnoreCase(name)) continue;
                 try (InputStream check = resolver.openInputStream(entry.getValue())) {
                     if (check != null && Arrays.equals(hash, VerifiedCopy.digest(check, cancelled))) return false;
                 }
