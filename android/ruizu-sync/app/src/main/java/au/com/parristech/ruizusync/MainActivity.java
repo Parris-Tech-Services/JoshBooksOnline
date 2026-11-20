@@ -331,10 +331,22 @@ public final class MainActivity extends Activity {
                 String tail = c.getURL().getPath();
                 tail = tail.substring(tail.lastIndexOf('/') + 1);
                 tail = java.net.URLDecoder.decode(tail, StandardCharsets.UTF_8.name());
-                String name = TransferUtils.isSupportedAudio(tail) ? tail : TransferUtils.safeName(fallbackTitle);
-                if (!TransferUtils.isSupportedAudio(name)) {
-                    if (contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("audio/mpeg")) name += ".mp3";
-                    else throw new IOException("Link is not an MP3 or supported downloadable audio file");
+                String mime = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT).split(";")[0].trim();
+                if (!mime.startsWith("audio/") && !mime.equals("application/octet-stream")) {
+                    throw new IOException("The link did not return an audio file");
+                }
+                String name;
+                if (TransferUtils.isSupportedAudio(tail)) {
+                    name = tail;
+                } else {
+                    String extension = mime.equals("audio/mpeg") ? ".mp3"
+                        : mime.equals("audio/mp4") || mime.equals("audio/x-m4a") ? ".m4a"
+                        : mime.equals("audio/ogg") ? ".ogg"
+                        : mime.equals("audio/flac") ? ".flac"
+                        : mime.equals("audio/wav") ? ".wav" : "";
+                    if (extension.isEmpty()) throw new IOException("Audio format not supported for transfer");
+                    String base = fallbackTitle == null || fallbackTitle.trim().isEmpty() ? "Audio download" : fallbackTitle;
+                    name = TransferUtils.safeName(base) + extension;
                 }
                 try (InputStream in = c.getInputStream()) {
                     writeToRuizu(in, target, name, c.getContentLengthLong());
