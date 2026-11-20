@@ -2,6 +2,8 @@ package au.com.parristech.ruizusync.ui;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -21,6 +23,7 @@ import android.text.InputType;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -28,10 +31,14 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import au.com.parristech.ruizusync.AppState;
+import au.com.parristech.ruizusync.HistoryStore;
+import au.com.parristech.ruizusync.PendingTransferStore;
+import au.com.parristech.ruizusync.PlayerFolderStore;
 import au.com.parristech.ruizusync.R;
 import au.com.parristech.ruizusync.TransferUtils;
 import au.com.parristech.ruizusync.TransferManager;
@@ -98,6 +105,13 @@ public final class MainActivity extends Activity implements TransferManager.List
     private TextView countersText;
     private TextView speedText;
     private TextView logText;
+    private CheckBox verifyCheck;
+    private CheckBox scopeCheck;
+    private CheckBox playlistCheck;
+    private Button retryButton;
+    private Button copyLogButton;
+    private TextView lastRunText;
+    private ScrollView contentScroll;
 
     private List<UsbVolumes.Info> usbVolumes = Collections.emptyList();
     private long destFreeBytes = -1;
@@ -112,11 +126,14 @@ public final class MainActivity extends Activity implements TransferManager.List
         manager = TransferManager.get(this);
         sourceRepo = new SourceRepo(this);
         buildUi();
+        syncOptionViews();
+        updateLastRunText();
         renderSelections();
         render(manager.snapshot());
         refreshUsb();
         ensureNotificationPermission();
         handleShareIntent(getIntent());
+        maybeOfferResume();
     }
 
     @Override
@@ -159,6 +176,7 @@ public final class MainActivity extends Activity implements TransferManager.List
 
     private void buildUi() {
         ScrollView scroll = new ScrollView(this);
+        contentScroll = scroll;
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(getColor(R.color.surface));
 
@@ -258,7 +276,18 @@ public final class MainActivity extends Activity implements TransferManager.List
                 // Keep the current value.
             }
         });
-        optionsCard.addView(duplicateSpinner, margins(0, dp(4), 0, 0));
+        optionsCard.addView(duplicateSpinner, margins(0, dp(4), 0, dp(14)));
+
+        verifyCheck = choice("Verify each copy (SHA-256 read-back)", state.verifyAfterCopy(),
+                (button, checked) -> state.setVerifyAfterCopy(checked));
+        optionsCard.addView(verifyCheck);
+        scopeCheck = choice("Only match duplicates inside the destination folder",
+                state.duplicatesInTargetFolderOnly(),
+                (button, checked) -> state.setDuplicatesInTargetFolderOnly(checked));
+        optionsCard.addView(scopeCheck);
+        playlistCheck = choice("Write M3U playlists for each folder", state.writePlaylists(),
+                (button, checked) -> state.setWritePlaylists(checked));
+        optionsCard.addView(playlistCheck);
         root.addView(optionsCard);
 
         root.addView(sectionHeader("4 · Podcasts & audio links"));
@@ -306,6 +335,22 @@ public final class MainActivity extends Activity implements TransferManager.List
         progressCard.setVisibility(View.GONE);
         root.addView(progressCard, margins(0, dp(16), 0, 0));
 
+        LinearLayout lastRunCard = card();
+        lastRunText = label("No transfers yet", 12, false);
+        lastRunText.setTextColor(getColor(R.color.text_muted));
+        lastRunCard.addView(lastRunText);
+        LinearLayout lastRunButtons = new LinearLayout(this);
+        lastRunButtons.setOrientation(LinearLayout.HORIZONTAL);
+        retryButton = secondaryButton("Retry failed", v -> retryFailed());
+        retryButton.setEnabled(false);
+        copyLogButton = secondaryButton("Copy log", v -> copyLog());
+        lastRunButtons.addView(retryButton, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        copyParams.leftMargin = dp(8);
+        lastRunButtons.addView(copyLogButton, copyParams);
+        lastRunCard.addView(lastRunButtons, margins(0, dp(8), 0, 0));
+        root.addView(lastRunCard);
+
         root.addView(sectionHeader("Library links"));
         LinearLayout libraryCard = card();
         LinearLayout libraryRowOne = new LinearLayout(this);
@@ -352,6 +397,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         ejectNote.setTextColor(getColor(R.color.text_muted));
         root.addView(ejectNote);
 
+        applyWindowInsets(scroll);
         setContentView(scroll);
     }
 
@@ -522,6 +568,13 @@ public final class MainActivity extends Activity implements TransferManager.List
             if (snapshot.failed > 0) {
                 counters.append(" · ").append(snapshot.failed).append(" failed");
             }
+            if (snapshot.retried > 0) {
+                counters.append(" · ").append(snapshot.retried).append(" retried");
+            }
+            if (snapshot.playlists > 0) {
+                counters.append(" · ").append(snapshot.playlists).append(" playlist")
+                        .append(snapshot.playlists == 1 ? "" : "s");
+            }
             countersText.setText(counters.toString());
 
             StringBuilder speed = new StringBuilder();
@@ -563,6 +616,12 @@ public final class MainActivity extends Activity implements TransferManager.List
         boolean running = manager.isRunning();
         startButton.setEnabled(!running && !busy && !state.sources().isEmpty() && state.destinationTree() != null);
         cancelButton.setEnabled(running);
+        if (retryButton != null) {
+            retryButton.setEnabled(!running && snapshot.isFinished() && !manager.failedSources().isEmpty());
+        }
+        if (snapshot.isFinished()) {
+            updateLastRunText();
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -637,6 +696,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             if (tree != null) {
                 takePersistable(tree, false);
                 state.setDestination(tree, "");
+                PlayerFolderStore.remember(this, tree, "");
                 destFreeBytes = -1;
                 refreshDestination(tree);
                 renderSelections();
@@ -763,6 +823,7 @@ public final class MainActivity extends Activity implements TransferManager.List
                     return;
                 }
                 state.setDestination(treeUri, finalLabel);
+                PlayerFolderStore.remember(this, treeUri, finalLabel);
                 destFreeBytes = finalFree;
                 renderSelections();
             });
@@ -777,8 +838,8 @@ public final class MainActivity extends Activity implements TransferManager.List
         setBusy(true, "Loading podcast feed…");
         ioExecutor.execute(() -> {
             try {
-                String xml = RemoteAudio.fetchText(link, RemoteAudio.MAX_FEED_BYTES);
-                final List<FeedScanner.Episode> episodes = FeedScanner.scan(xml);
+                final List<FeedScanner.Episode> episodes =
+                        RemoteAudio.fetchFeedEpisodes(link, RemoteAudio.MAX_FEED_CHARS);
                 mainHandler.post(() -> {
                     if (isFinishing()) {
                         return;
@@ -925,7 +986,10 @@ public final class MainActivity extends Activity implements TransferManager.List
 
     private void beginTransfer(List<SourceItem> sources, Uri dest) {
         TransferManager.Request request = new TransferManager.Request(
-                sources, dest, state.organiseMode(), state.duplicateMode());
+                sources, dest, state.organiseMode(), state.duplicateMode(),
+                state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(),
+                state.writePlaylists());
+        PlayerFolderStore.remember(this, dest, state.destinationLabel());
         try {
             manager.start(request);
         } catch (RuntimeException e) {
@@ -943,16 +1007,24 @@ public final class MainActivity extends Activity implements TransferManager.List
     // ---------------------------------------------------------------------------------------
 
     private void refreshUsb() {
-        usbVolumes = UsbVolumes.detect(this);
+        UsbVolumes.Detection environment = UsbVolumes.detectEnvironment(this);
+        usbVolumes = environment.volumes;
         if (usbStatus == null) {
             return;
         }
         if (usbVolumes.isEmpty()) {
-            usbStatus.setText("No USB storage mounted yet. Connect the player with its cable, unlock "
-                    + "the phone, wait for Android to mount it, then choose the player folder. If the "
-                    + "player only offers MTP, Android cannot expose it as storage — see the notes.");
+            if (environment.looksLikeMtpOnly()) {
+                usbStatus.setText("A USB device is connected, but Android has not mounted it as "
+                        + "storage (MTP/PTP only). No no-root app can write to an MTP player: switch "
+                        + "it to USB disk / mass-storage mode, or copy from a computer.");
+            } else {
+                usbStatus.setText("No USB storage mounted yet. Connect the player with its cable, "
+                        + "unlock the phone and wait for Android to mount it, then choose the player "
+                        + "folder.");
+            }
             useUsbButton.setEnabled(false);
         } else {
+            maybeRestorePlayerFolder();
             StringBuilder sb = new StringBuilder("USB storage detected: ");
             for (int i = 0; i < usbVolumes.size(); i++) {
                 if (i > 0) {
@@ -1125,6 +1197,175 @@ public final class MainActivity extends Activity implements TransferManager.List
             return t.getClass().getSimpleName();
         }
         return message;
+    }
+
+    private void syncOptionViews() {
+        organiseSpinner.setSelection(state.organiseMode().ordinal());
+        duplicateSpinner.setSelection(state.duplicateMode().ordinal());
+        if (verifyCheck != null) {
+            verifyCheck.setChecked(state.verifyAfterCopy());
+            scopeCheck.setChecked(state.duplicatesInTargetFolderOnly());
+            playlistCheck.setChecked(state.writePlaylists());
+        }
+    }
+
+    private CheckBox choice(String text, boolean checked,
+                            android.widget.CompoundButton.OnCheckedChangeListener listener) {
+        CheckBox box = new CheckBox(this);
+        box.setText(text);
+        box.setTextSize(13);
+        box.setTextColor(getColor(R.color.text));
+        box.setChecked(checked);
+        box.setButtonTintList(ColorStateList.valueOf(getColor(R.color.brand)));
+        box.setOnCheckedChangeListener(listener);
+        return box;
+    }
+
+    private void updateLastRunText() {
+        if (lastRunText == null) {
+            return;
+        }
+        String summary = HistoryStore.lastRunSummary(this);
+        long at = HistoryStore.lastRunAt(this);
+        if (summary.isEmpty()) {
+            lastRunText.setText("No transfers yet");
+            return;
+        }
+        String when = at > 0
+                ? android.text.format.DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(),
+                        android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
+                : "";
+        lastRunText.setText("Last run" + (when.isEmpty() ? "" : " (" + when + ")") + ": " + summary);
+    }
+
+    private void retryFailed() {
+        List<SourceItem> failed = manager.failedSources();
+        if (failed.isEmpty()) {
+            toast("Nothing to retry");
+            return;
+        }
+        Uri dest = state.destinationTree();
+        if (dest == null) {
+            toast("Choose the player folder first");
+            return;
+        }
+        TransferManager.Request request = new TransferManager.Request(
+                new ArrayList<>(failed), dest, state.organiseMode(), state.duplicateMode(),
+                state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(), state.writePlaylists());
+        try {
+            manager.start(request);
+        } catch (RuntimeException e) {
+            toast(describe(e));
+            return;
+        }
+        TransferService.start(this);
+        sawRunning = true;
+        notifiedPhase = null;
+        render(manager.snapshot());
+    }
+
+    private void copyLog() {
+        String stored = HistoryStore.lastRunLog(this);
+        TransferManager.Snapshot snapshot = manager.snapshot();
+        String live = snapshot == null ? "" : joinTail(snapshot.log, 200);
+        String text = stored == null || stored.isEmpty() ? live : stored;
+        if (text.isEmpty()) {
+            toast("No log to copy yet");
+            return;
+        }
+        try {
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("RUIZU Sync log", text));
+                toast("Log copied to the clipboard");
+            }
+        } catch (Throwable t) {
+            toast("Could not copy the log: " + describe(t));
+        }
+    }
+
+    private void maybeOfferResume() {
+        if (!PendingTransferStore.hasPending(this)) {
+            return;
+        }
+        PendingTransferStore.Pending pending = PendingTransferStore.load(this);
+        if (pending == null || pending.remaining() == 0) {
+            PendingTransferStore.clear(this);
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Resume previous transfer?")
+                .setMessage(pending.remaining() + " of " + pending.request.sources.size()
+                        + " files were not copied when the app last stopped.")
+                .setPositiveButton("Restore queue", (dialog, which) -> restorePending(pending))
+                .setNegativeButton("Discard", (dialog, which) -> {
+                    PendingTransferStore.clear(this);
+                    renderSelections();
+                })
+                .show();
+    }
+
+    private void restorePending(PendingTransferStore.Pending pending) {
+        List<SourceItem> sources = pending.request.sources;
+        int from = Math.min(pending.processed, sources.size());
+        state.clearSources();
+        state.addSources(sources.subList(from, sources.size()));
+        state.setDestination(pending.request.destTree, "");
+        state.setOrganiseMode(pending.request.organiseMode);
+        state.setDuplicateMode(pending.request.duplicateMode);
+        state.setVerifyAfterCopy(pending.request.verifyAfterCopy);
+        state.setDuplicatesInTargetFolderOnly(pending.request.duplicatesInTargetFolderOnly);
+        state.setWritePlaylists(pending.request.writePlaylists);
+        syncOptionViews();
+        refreshDestination(pending.request.destTree);
+        renderSelections();
+        toast("Queue restored — press Start transfer");
+    }
+
+    private void maybeRestorePlayerFolder() {
+        if (state.destinationTree() != null || usbVolumes.isEmpty()) {
+            return;
+        }
+        for (UsbVolumes.Info info : usbVolumes) {
+            String uuid = info.volume.getUuid();
+            String key = uuid == null || uuid.isEmpty() ? "primary" : uuid;
+            String stored = PlayerFolderStore.treeForVolume(this, key);
+            if (stored == null) {
+                continue;
+            }
+            Uri tree = Uri.parse(stored);
+            if (!PlayerFolderStore.hasPersistedPermission(this, tree)) {
+                continue;
+            }
+            state.setDestination(tree, info.label);
+            refreshDestination(tree);
+            toast("Using your saved player folder on " + info.label);
+            return;
+        }
+    }
+
+    private void applyWindowInsets(View root) {
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            final int left;
+            final int top;
+            final int right;
+            final int bottom;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                left = bars.left;
+                top = bars.top;
+                right = bars.right;
+                bottom = bars.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft();
+                top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            view.setPadding(left, top, right, bottom);
+            return insets;
+        });
     }
 
     private void toast(String message) {

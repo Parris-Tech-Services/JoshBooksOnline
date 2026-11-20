@@ -4,12 +4,15 @@ import android.net.Uri;
 
 import au.com.parristech.ruizusync.core.MediaTypes;
 
-import java.io.ByteArrayOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -22,7 +25,12 @@ import java.util.Locale;
 public final class RemoteAudio {
 
     public static final long MAX_BYTES = 2L * 1024 * 1024 * 1024;
-    public static final int MAX_FEED_BYTES = 5 * 1024 * 1024;
+    /**
+     * Character budget for a feed download. Feeds are streamed and parsing stops as soon as
+     * {@link FeedScanner#MAX_EPISODES} episodes are collected, so this is only a safety valve for
+     * pathological documents - long-running shows regularly ship 10-30 MB feeds.
+     */
+    public static final int MAX_FEED_CHARS = 32 * 1024 * 1024;
 
     private static final int MAX_REDIRECTS = 5;
     private static final int CONNECT_TIMEOUT_MS = 15000;
@@ -107,8 +115,12 @@ public final class RemoteAudio {
         return new ConnectionStream(connection.getInputStream(), connection);
     }
 
-    /** Fetches a podcast feed (or similar text document) with a hard size cap. */
-    public static String fetchText(String url, int maxBytes) throws IOException {
+    /**
+     * Streams a podcast feed and returns the episodes found so far. Reading stops early once
+     * {@link FeedScanner#MAX_EPISODES} episodes are collected or the character budget is spent,
+     * so large feeds (e.g. long-running shows with thousands of episodes) load in seconds.
+     */
+    public static List<FeedScanner.Episode> fetchFeedEpisodes(String url, int maxChars) throws IOException {
         HttpURLConnection connection = connect(new URL(url), "GET");
         try {
             int code = connection.getResponseCode();
@@ -119,20 +131,23 @@ public final class RemoteAudio {
             if (!mime.isEmpty() && !isFeedContentType(mime)) {
                 throw new IOException("The link is not a podcast feed (" + mime + ")");
             }
-            try (InputStream in = connection.getInputStream()) {
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                byte[] buffer = new byte[64 * 1024];
-                int total = 0;
+            FeedScanner.StreamScanner scanner = new FeedScanner.StreamScanner();
+            try (Reader reader = new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8)) {
+                char[] buffer = new char[16 * 1024];
+                long total = 0;
                 int read;
-                while ((read = in.read(buffer)) != -1) {
+                while ((read = reader.read(buffer)) != -1) {
                     total += read;
-                    if (total > maxBytes) {
-                        throw new IOException("Feed is larger than " + (maxBytes / 1024) + " KB");
+                    if (total > maxChars) {
+                        break; // partial feed is fine: keep the episodes already parsed
                     }
-                    out.write(buffer, 0, read);
+                    scanner.feed(buffer, 0, read);
+                    if (scanner.done()) {
+                        break;
+                    }
                 }
-                return out.toString("UTF-8");
             }
+            return scanner.episodes();
         } finally {
             connection.disconnect();
         }

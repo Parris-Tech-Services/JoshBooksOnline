@@ -195,6 +195,11 @@ public final class DestRepo {
         }
     }
 
+    /** Finds a direct child by name (case-insensitive), or null when absent. */
+    public Node findChild(Node dir, String name) throws IOException {
+        return childrenFor(dir).get(name.toLowerCase(Locale.ROOT));
+    }
+
     public Set<String> existingNames(Node dir) throws IOException {
         return new HashSet<>(childrenFor(dir).keySet());
     }

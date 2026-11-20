@@ -1,126 +1,135 @@
-# RUIZU Sync (Android)
+# RUIZU Sync (Android) — 1.1.0
 
 Native, no-root companion for transferring music and podcasts from a Samsung phone (or Google
 Drive) to a RUIZU 64 GB MP3 player over USB. It is an independent Android app inside
 JoshBooksOnline; it does not change the Next.js site.
 
-This app replaces the original single-screen scaffold on this branch. The transfer engine,
-duplicate detection, folder planning, progress reporting and test suites are new; the podcast RSS
-browsing, direct HTTPS audio links, share-intent handling and `TransferUtils` tests from the first
-revision are preserved and now run on top of that engine.
+The transfer engine is a merged implementation: SAF source/destination access, folder planning,
+duplicate detection, progress reporting, retries, verification and the test suites. The podcast
+RSS browsing, direct HTTPS audio links, share-intent handling and `TransferUtils` tests from the
+first revision are preserved and run on top of that engine.
 
-## How it works
+## What the app does
 
-1. Connect the player with its USB cable and unlock the phone. Android mounts the player as
-   removable storage (USB mass storage / OTG drive) and it appears to the system file picker.
-2. In **RUIZU Sync**, tap **Use connected USB drive** (or **Choose player folder** for Drive/manual
-   navigation) and select the player folder. The app keeps this permission across restarts.
+1. Connect the player with its USB cable and unlock the phone. Android mounts it as removable
+   storage (USB mass storage / OTG drive) and it appears to the system file picker.
+2. Tap **Use connected USB drive** (or **Choose player folder**). The folder is remembered per
+   volume, so reconnecting the same player restores it automatically.
 3. Add sources:
-   - **Add files** — multi-select MP3s from phone storage or Google Drive through the Android
-     picker (SAF). Google Drive files come through its DocumentsProvider; some are labelled
-     `application/octet-stream`, so the app checks the extension instead.
-   - **Add folder** — pick a folder tree; every supported audio file underneath is queued,
-     including nested albums.
-   - **Browse podcast feed** — paste an HTTPS RSS/Atom feed, select episodes, and they are queued
-     as `Podcasts`.
+   - **Add files** — multi-select audio from phone storage or Google Drive (SAF; Google's
+     DocumentsProvider supplies the files).
+   - **Add folder** — recursive scan of a folder tree, including nested albums.
+   - **Browse podcast feed** — stream an HTTPS RSS/Atom feed and pick episodes. Feeds are parsed
+     incrementally and stop after 100 episodes, so multi-megabyte feeds (e.g. long-running shows)
+     load quickly instead of failing a size cap.
    - **Link → Music / Link → Podcasts** — queue a direct HTTPS audio file link.
-   - **Share** an audio file (or a link) into the app from another app.
+   - **Share** audio files or links into the app from another app.
 4. Choose **Folders on the player**: flat root, Artist / Album (from tags), by source folder,
    Music / Podcasts, or keep the source folder tree.
-5. Choose duplicate handling: skip by name + size (fast), skip by SHA-256 content, overwrite, or
-   keep both with an auto-renumbered name.
-6. **Start transfer**. Progress shows overall percentage, current file, byte counts, speed, ETA
-   and a log; a notification mirrors it with a Cancel action. Cancel is also available in-app.
+5. Choose duplicate handling: skip by name + size, skip by SHA-256 content, overwrite, or keep
+   both. Optionally only count files in the destination folder as duplicates.
+6. Optional reliability features (1.1.0):
+   - **Verify each copy** — the source is hashed while it is copied and the written file is read
+     back and compared (SHA-256); mismatches are deleted and retried.
+   - **Automatic retries** — transient failures are retried twice with backoff, and **Retry
+     failed** reruns only the files that failed.
+   - **Free-space checks** — the copy is refused with a clear message when the player lacks room.
+   - **Resume after process death** — the queue is persisted every 10 files; on restart the app
+     offers to restore the remaining files.
+   - **M3U playlists** — one playlist per touched folder, relative paths, player-compatible.
+   - **History** — last-run summary, a copyable log, and live retry counters.
+7. **Start transfer**: overall and per-file progress, speed, ETA, live log, cancel, and a
+   foreground-service notification with a Cancel action.
 
-The app never deletes unrelated player files, never formats storage, and removes a partially
+The app never deletes unrelated player files, never formats storage, and deletes a partially
 written file when a copy fails or is cancelled.
 
 ## Supported formats
 
-MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF. Anything else is reported as skipped
-instead of being copied where the player would ignore it. MP3 is the safest choice across RUIZU
-models; check your specific player's manual for APE/OGG support.
+MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF. Anything else is reported as skipped.
+MP3 is the safest choice across RUIZU models; check the player manual for APE/OGG support.
 
 ## Limits and non-goals
 
-- **No DRM bypass.** Files flagged `is_drm` by the local MediaStore are skipped, and this app never
-  decrypts anything. Spotify and YouTube/YouTube Music streams and offline downloads are not
-  transferable audio files and are rejected with an explanation.
-- **MTP-only players cannot be mounted by Android.** Many cheap players (and some RUIZU units) only
-  expose MTP or PTP, which the Storage Access Framework cannot mount as a file tree, so no
-  no-root Android app can write to them. If the player shows up in My Files as "USB storage", the
-  SAF path works; if it only appears as "MTP device", the transfer must be done from a computer.
-- **USB volume root may be unselectable** on some Android builds; select the `Music` or `Podcasts`
-  subfolder instead and use the flat layout, or pick both folders separately.
-- Podcast feeds and direct links must be HTTPS and return audio; playlists (`.m3u`, `.m3u8`,
-  `.pls`, `.xspf`, `.mpd`) are ignored.
-- Remote (feed/link) files are streamed at transfer time and capped at 2 GB. SHA-256 duplicate
-  detection on a remote file reads the source twice, once to hash and once to copy.
-- Android may kill the process if the system is short of memory; the foreground service keeps the
-  transfer alive in normal use, but it is not a download manager for overnight queues.
+- **No DRM bypass.** Files flagged `is_drm` by the local MediaStore are skipped; nothing is
+  decrypted. Spotify and YouTube/YouTube Music streams are rejected with an explanation.
+- **MTP-only players cannot be mounted by Android.** If the player only appears as an MTP/PTP
+  device, the app now says so explicitly: no no-root app can write to MTP. Transfer from a
+  computer, or switch the player to USB disk / mass-storage mode.
+- **USB volume root may be unselectable** on some builds; pick the `Music` / `Podcasts`
+  subfolder and the flat layout instead.
+- Remote (feed/link) files stream at transfer time, capped at 2 GB; playlists (`.m3u`, `.m3u8`,
+  `.pls`, `.xspf`, `.mpd`) are rejected.
+- SHA-256 duplicate detection on a remote file reads the source twice when verification is off
+  (once to hash, once to copy).
+- Android may kill the app under memory pressure; the foreground service keeps a transfer alive
+  in normal use and the queue is persisted for resume, but there is no overnight download manager.
 
 ## Build
 
-Two independent build paths are supported.
+Two independent paths exist.
 
-**CI (authoritative):** GitHub Actions runs `gradle :app:testDebugUnitTest` and
-`:app:assembleDebug` with the official Android SDK 35, then runs `tools/verify.sh` and an emulator
-smoke test (install, launch, screenshot, crash-buffer check). The APK is uploaded as the
-`ruizu-sync-debug-apk` artifact.
+**CI (authoritative):** GitHub Actions runs `gradle :app:testDebugUnitTest :app:assembleDebug`
+with Android SDK 35, then `tools/verify.sh` (signature, alignment, manifest, dex) and an emulator
+smoke test with hardware acceleration when the runner grants KVM access.
 
-**Termux / offline toolchain (used during development):**
+**Termux / offline toolchain:**
 
 ```sh
 ./tools/fetch-sdk.sh   # API 34 stubs + official R8/D8 from Google Maven
 ./tools/build.sh       # aapt2 + javac + d8 + zipalign + apksigner
-./tools/verify.sh      # signature, alignment, manifest, dex checks
+./tools/verify.sh      # static checks against the built APK
 ./tools/test.sh        # JVM suites without Gradle
 ```
 
-The Termux `d8` (R8 3.3.20) crashes on enum classes, so `tools/fetch-sdk.sh` downloads the current
-official R8 from Google Maven and the build script uses it. This is why the project no longer
-depends on the bundled compiler.
+The Termux `d8` (R8 3.3.20) crashes on enum classes; `tools/fetch-sdk.sh` downloads the current
+official R8 from Google Maven and the build uses it, so the project does not depend on the
+bundled compiler.
 
 ## Tests
 
-| Level | What runs | Where |
-| --- | --- | --- |
-| JVM unit tests | 139 core-logic checks (formatting, formats, name sanitising, folder planning, duplicate matching, index bookkeeping, hashing, stats) | `app/src/test/.../core/CoreTests.java` |
-| JVM pipeline tests | 35 checks driving the full transfer decision pipeline (planner → sanitise → dedupe → collision → counters) against an in-memory player | `app/src/test/.../core/PipelineTests.java` |
-| JVM feed tests | RSS 2.0 / Atom enclosure parsing, HTTPS-only filtering, playlist/streaming rejection, CDATA/entities, episode cap | `app/src/test/.../net/FeedScannerTest.java` |
-| JVM utility tests | Original `TransferUtils` behaviour (audio detection, safe names, numbering, streaming-link detection) | `app/src/test/.../TransferUtilsTest.java` |
-| APK static verification | v2/v3 signature, 4-byte alignment, manifest (`exported`, FGS type, permissions), dex payload | `tools/verify.sh` |
-| Emulator smoke test | APK installs, activity launches, expected UI text renders, no crash in the crash buffer, screenshot captured | CI job `emulator` |
+| Level | What runs |
+| --- | --- |
+| JVM core | 164 checks: formatting, formats/MIME mapping, name sanitising, folder planning incl. Music/Podcasts, duplicate matching incl. folder-scoped, index bookkeeping, playlist generation, stats/retry counters, hashing |
+| JVM pipeline | 35 checks driving planner → sanitise → dedupe → collision → counters against an in-memory player |
+| JVM feed | 15 JUnit tests incl. streaming chunk boundaries and early stop on 400-episode feeds |
+| JVM utils | Original `TransferUtils` behaviour |
+| APK static | v2/v3 signature, 4-byte alignment, manifest (`exported`, FGS type, permissions), single- or multi-dex payload |
+| Emulator | install, launch, expected UI text, no crash in the crash buffer, screenshot artifact |
 
-Run everything locally with `gradle -p android/ruizu-sync :app:testDebugUnitTest` or
-`./tools/test.sh`.
+Run locally: `gradle -p android/ruizu-sync :app:testDebugUnitTest` or `./tools/test.sh`.
 
 ## What still requires a physical device
 
-Emulator verification cannot exercise USB mass storage, the Google Drive DocumentsProvider, or a
-real RUIZU player. Before treating USB transfers as verified, confirm on the phone + player:
+Emulator verification cannot exercise USB mass storage, Google Drive's provider, or the real
+player. Confirm on the phone + player:
 
-1. The player appears in **Samsung My Files** as USB storage (not only as an MTP device) after
-   connecting, and the RUIZU Sync USB banner detects it.
-2. Selecting the player root works; if not, select `Music`/`Podcasts` subfolders and note which
-   layout you used.
-3. A full album folder copy completes with no failures, and the progress bar, notification and
-   Cancel action behave.
-4. The player indexes and plays the copied files, including nested Artist/Album folders and
-   non-ASCII filenames.
-5. Duplicate runs skip correctly; SHA-256 mode catches a renamed duplicate; overwrite replaces the
-   intended file only.
-6. Cancelling mid-copy leaves no partial file on the player, and safe eject works only after the
-   transfer completes.
-7. A file larger than 4 GB cannot exist on FAT32: confirm large WAV/FLAC behaviour and, if the
-   player uses exFAT, verify that too.
-8. DRM-protected local audio is skipped rather than copied (the log should say so).
-9. Podcast RSS browsing and a direct HTTPS link transfer to `Podcasts`, and a file shared from
-   another app lands in the right folder.
-10. If the player only offers MTP, record that finding — the SAF workflow cannot work on it.
+1. The player appears in Samsung My Files as USB storage and the app's USB banner detects it (or
+   that it is MTP-only, which the app now reports explicitly).
+2. Selecting the player root works; otherwise select `Music`/`Podcasts`.
+3. A full album copy completes; notification and Cancel behave; the player indexes and plays the
+   files, including nested folders and non-ASCII names.
+4. Duplicate runs skip correctly; SHA-256 mode catches a renamed duplicate; the destination-folder
+   scope behaves as expected; overwrite touches only the intended file.
+5. Verification mode reports no mismatches on a healthy cable and catches failures on a bad one.
+6. Cancelling mid-copy leaves no partial file; safe eject works only after completion.
+7. >4 GB behaviour on FAT32 vs exFAT; DRM-flagged files are skipped.
+8. Podcast feed (including a large one), direct link and share-intent imports land in the right
+   folder; M3U playlists appear and play.
+
+## Still to do (not in 1.1.0)
+
+- Parallel copies for many small files (currently serial, deliberately, to keep progress and
+  verification bookkeeping correct).
+- Podcast subscriptions with a background scheduler and new-episode notifications (manual feed
+  browsing only today).
+- Migration from `dataSync` foreground service to Android 14+ user-initiated data transfer jobs.
+- Full string localisation (UI strings are still inline in Java).
+- Instrumented SAF test with a fake `DocumentsProvider` (biggest remaining coverage gap).
+- Release signing via CI secrets and R8 minification for distribution.
 
 ## Package
 
 - Application ID / namespace: `au.com.parristech.ruizusync`
-- minSdk 26 (Android 8.0), targetSdk 34 (Samsung Galaxy A55 ships Android 14/15)
-- No AndroidX dependencies; framework widgets only, so the APK stays small (~110 KB)
+- minSdk 26 (Android 8.0), targetSdk 35 (edge-to-edge insets handled)
+- No AndroidX dependencies; framework widgets only (~110 KB APK)

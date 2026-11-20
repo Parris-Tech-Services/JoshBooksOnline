@@ -6,7 +6,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APK="${1:-$ROOT/dist/RUIZU-Sync-1.0.0-debug.apk}"
+APK="${1:-$ROOT/dist/RUIZU-Sync-1.1.0-debug.apk}"
 WORK="$ROOT/.build/verify"
 FAILURES=0
 
@@ -109,7 +109,7 @@ else
   fail "unexpected minSdk"
   grep -i 'sdkversion' "$WORK/badging.txt" || true
 fi
-grep -qF "targetSdkVersion:'34'" "$WORK/badging.txt" && ok "targetSdk 34" || fail "unexpected targetSdk"
+grep -qF "targetSdkVersion:'35'" "$WORK/badging.txt" && ok "targetSdk 35" || fail "unexpected targetSdk"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then

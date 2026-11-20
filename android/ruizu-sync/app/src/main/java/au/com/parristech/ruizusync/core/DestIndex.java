@@ -2,6 +2,7 @@ package au.com.parristech.ruizusync.core;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -46,6 +47,38 @@ public final class DestIndex {
     public List<DestEntry> sameSize(long size) {
         List<DestEntry> entries = bySize.get(sizeKey(size));
         return entries == null ? Collections.<DestEntry>emptyList() : entries;
+    }
+
+    /**
+     * Entries with this byte size that live directly inside one folder ("" = player root).
+     * Used when the user only wants duplicates inside the destination folder to count.
+     */
+    public List<DestEntry> sameSizeInFolder(long size, String folderRelPath) {
+        List<DestEntry> all = sameSize(size);
+        if (all.isEmpty()) {
+            return all;
+        }
+        String key = folderRelPath == null ? "" : folderRelPath.toLowerCase(Locale.ROOT);
+        List<DestEntry> scoped = new ArrayList<>();
+        for (DestEntry entry : all) {
+            if (entry.folderRelPath.toLowerCase(Locale.ROOT).equals(key)) {
+                scoped.add(entry);
+            }
+        }
+        return scoped;
+    }
+
+    /** All files directly inside one folder ("" = player root), sorted by name. */
+    public List<DestEntry> filesInFolder(String folderRelPath) {
+        String key = folderRelPath == null ? "" : folderRelPath.toLowerCase(Locale.ROOT);
+        List<DestEntry> files = new ArrayList<>();
+        for (DestEntry entry : byRelPathLower.values()) {
+            if (entry.folderRelPath.toLowerCase(Locale.ROOT).equals(key)) {
+                files.add(entry);
+            }
+        }
+        files.sort(Comparator.comparing(entry -> entry.name.toLowerCase(Locale.ROOT)));
+        return files;
     }
 
     /** Lower-cased names already present in the given folder ("" = player root). */

@@ -27,13 +27,17 @@ public final class CoreTests {
         folderPlanner();
         folderPlannerMusicAndPodcasts();
         nameCollision();
+        playlistWriter();
         destIndexBasics();
         destIndexRemove();
+        destIndexFolders();
         duplicateMatcherNameAndSize();
         duplicateMatcherExactHash();
+        duplicateMatcherScoped();
         duplicateMatcherSkipsHashingWhenNoSizeMatch();
         transferStatsCounters();
         transferStatsUnknownSizes();
+        statsRetryAndPlaylistCounters();
         hashing();
         duplicateModeFlags();
 
@@ -264,6 +268,84 @@ public final class CoreTests {
         index.remove("Music/b.mp3");
         checkEquals("remove last entry", 0, index.size());
         checkEquals("last size bucket cleared", 0, index.sameSize(100).size());
+    }
+
+    private static void destIndexFolders() {
+        DestIndex index = new DestIndex();
+        index.add(new DestEntry("Music/b.mp3", "b.mp3", 100));
+        index.add(new DestEntry("Music/a.mp3", "a.mp3", 100));
+        index.add(new DestEntry("Podcasts/c.mp3", "c.mp3", 100));
+        index.add(new DestEntry("root.mp3", "root.mp3", 100));
+
+        checkEquals("filesInFolder sorted", Arrays.asList("a.mp3", "b.mp3"),
+                names(index.filesInFolder("Music")));
+        checkEquals("filesInFolder case-insensitive", 2, index.filesInFolder("music").size());
+        checkEquals("filesInFolder podcasts", 1, index.filesInFolder("Podcasts").size());
+        checkEquals("filesInFolder root", 1, index.filesInFolder("").size());
+        checkEquals("filesInFolder unknown", 0, index.filesInFolder("Nope").size());
+
+        checkEquals("sameSizeInFolder", 2, index.sameSizeInFolder(100, "Music").size());
+        checkEquals("sameSizeInFolder root", 1, index.sameSizeInFolder(100, "").size());
+        checkEquals("sameSizeInFolder unknown", 0, index.sameSizeInFolder(100, "Nope").size());
+    }
+
+    private static List<String> names(List<DestEntry> entries) {
+        List<String> names = new ArrayList<>();
+        for (DestEntry entry : entries) {
+            names.add(entry.name);
+        }
+        return names;
+    }
+
+    private static void duplicateMatcherScoped() throws IOException {
+        DestIndex index = new DestIndex();
+        index.add(new DestEntry("Music/a.mp3", "a.mp3", 100));
+
+        DuplicateCheck wholePlayer = DuplicateMatcher.check(
+                new SourceFileInfo("a.mp3", 100, null), index, false, null);
+        check("scoped: whole player finds duplicate", wholePlayer.isDuplicate());
+
+        DuplicateCheck otherFolder = DuplicateMatcher.check(
+                new SourceFileInfo("a.mp3", 100, null), index, false, null, "Podcasts");
+        check("scoped: other folder is not duplicate", !otherFolder.isDuplicate());
+
+        DuplicateCheck sameFolder = DuplicateMatcher.check(
+                new SourceFileInfo("a.mp3", 100, null), index, false, null, "Music");
+        check("scoped: same folder is duplicate", sameFolder.isDuplicate());
+
+        DuplicateCheck rootFolder = DuplicateMatcher.check(
+                new SourceFileInfo("a.mp3", 100, null), index, false, null, "");
+        check("scoped: root is not duplicate", !rootFolder.isDuplicate());
+    }
+
+    private static void playlistWriter() {
+        String playlist = PlaylistWriter.buildM3u(Arrays.asList("Track 01.mp3", "Track 02.flac"));
+        check("playlist header", playlist.startsWith("#EXTM3U\n"));
+        check("playlist extinf", playlist.contains("#EXTINF:-1,Track 01\n"));
+        check("playlist entry one", playlist.contains("Track 01.mp3\n"));
+        check("playlist entry two", playlist.contains("Track 02.flac\n"));
+        checkEquals("playlist display name", "Track 01", PlaylistWriter.displayName("Track 01.mp3"));
+        checkEquals("playlist empty", "#EXTM3U\n", PlaylistWriter.buildM3u(Collections.<String>emptyList()));
+        checkEquals("playlist null safe", "#EXTM3U\n", PlaylistWriter.buildM3u(null));
+        checkEquals("playlist mime", "audio/x-mpegurl", PlaylistWriter.mimeType());
+    }
+
+    private static void statsRetryAndPlaylistCounters() {
+        TransferStats stats = new TransferStats();
+        stats.start(1, 10);
+        checkEquals("retries start at zero", 0, stats.getRetriedFiles());
+        stats.markRetry();
+        stats.markRetry();
+        checkEquals("retry counter", 2, stats.getRetriedFiles());
+        stats.markPlaylistWritten();
+        checkEquals("playlist counter", 1, stats.getPlaylistsWritten());
+
+        TransferStats verify = new TransferStats();
+        verify.start(1, 10);
+        verify.beginFile("a.mp3", 10);
+        verify.finishFile(TransferStats.Outcome.VERIFY_FAILED);
+        checkEquals("verify failure counts as failed", 1, verify.getFailedFiles());
+        checkEquals("verify failure completes the file", 1, verify.getCompletedFiles());
     }
 
     // ---- DuplicateMatcher -----------------------------------------------------------------

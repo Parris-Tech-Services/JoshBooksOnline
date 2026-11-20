@@ -7,11 +7,10 @@ android {
     defaultConfig {
         applicationId 'au.com.parristech.ruizusync'
         minSdk 26
-        // targetSdk 34 keeps the framework's legacy layout behaviour; edge-to-edge enforcement
-        // in Android 15 (targetSdk 35) would draw the UI under the system bars.
-        targetSdk 34
-        versionCode 2
-        versionName '1.0.0'
+        // targetSdk 35: Android 15 enforces edge-to-edge, so MainActivity applies window insets.
+        targetSdk 35
+        versionCode 3
+        versionName '1.1.0'
     }
 
     compileOptions {
