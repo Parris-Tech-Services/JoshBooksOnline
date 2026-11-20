@@ -181,9 +181,11 @@ jobs:
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: |
-            set -o pipefail
-            # testBuildType is 'safTest', so this runs the safTest variant (package .saftest)
-            # and installs both the app and its androidTest APK on the emulator.
+            # android-emulator-runner runs this with /usr/bin/sh (dash), which does not
+            # support `set -o pipefail` - adding it aborted the step with exit code 2 before
+            # any test ran. Keep this script POSIX sh.
+            # testBuildType is 'safTest', so connectedAndroidTest runs that variant
+            # (package .saftest) and installs both the app and its androidTest APK.
             gradle --no-daemon -p android/ruizu-sync :app:connectedAndroidTest
 
       - name: Upload instrumentation reports
