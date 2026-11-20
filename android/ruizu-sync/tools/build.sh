@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Offline-style APK build using the Android build tools in Termux (aapt2, javac, d8/R8,
 # zipalign, apksigner). This is the second, independent build path; CI uses Gradle instead.
 set -euo pipefail

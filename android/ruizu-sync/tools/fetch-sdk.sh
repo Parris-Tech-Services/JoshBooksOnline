@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Downloads the Android API 34 framework stubs (classes + resources) and a current official R8/D8
 # build. The R8 bundled with Termux (3.3.20) crashes on enum classes, so this project uses the
 # official Google Maven build instead. Safe to re-run; skips whatever is already present.

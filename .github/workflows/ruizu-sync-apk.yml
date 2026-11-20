@@ -41,9 +41,10 @@ jobs:
       - name: Static APK verification
         run: |
           set -euo pipefail
-          export PATH="$ANDROID_SDK_ROOT/build-tools/35.0.0:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
+          export PATH="$SDK/build-tools/35.0.0:$SDK/platform-tools:$PATH"
           cd android/ruizu-sync
-          ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
+          bash ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

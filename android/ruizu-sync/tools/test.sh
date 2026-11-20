@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Runs the JVM test suites without Android or Gradle: pure logic (core), the transfer pipeline
 # simulation, RSS feed scanning and the original TransferUtils tests.
 set -euo pipefail
