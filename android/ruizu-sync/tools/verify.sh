@@ -7,6 +7,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APK="${1:-$ROOT/dist/RUIZU-Sync-1.2.0-debug.apk}"
+EXPECTED_PACKAGE="${2:-au.com.parristech.ruizusync}"
 WORK="$ROOT/.build/verify"
 FAILURES=0
 
@@ -84,7 +85,7 @@ report "badging"
 aapt2 dump badging "$APK" > "$WORK/badging.txt" 2>&1
 grep -E "^(package:|sdkVersion|minSdkVersion|targetSdkVersion|application-label|launchable-activity|uses-permission)" \
   "$WORK/badging.txt" || fail "badging failed"
-grep -qF "package: name='au.com.parristech.ruizusync'" "$WORK/badging.txt" \
+grep -qF "package: name='$EXPECTED_PACKAGE'" "$WORK/badging.txt" \
   && ok "package name correct" || fail "package name wrong"
 
 # ---------------------------------------------------------------------------------------

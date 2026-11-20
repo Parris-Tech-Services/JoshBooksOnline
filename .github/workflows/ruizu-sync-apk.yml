@@ -37,6 +37,22 @@ jobs:
       - name: Unit tests and debug APK
         run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug
 
+      - name: Build signed stable release APK
+        env:
+          RELEASE_KEYSTORE: ${{ github.workspace }}/.keys/release.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RUIZU_RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RUIZU_RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RUIZU_RELEASE_KEY_PASSWORD }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RUIZU_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .keys
+          test -n "$RELEASE_KEYSTORE_BASE64" || { echo "Missing dedicated release signing key" >&2; exit 1; }
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RELEASE_KEYSTORE"
+          chmod 600 "$RELEASE_KEYSTORE"
+          gradle --no-daemon -p android/ruizu-sync :app:assembleRelease
+          test -s android/ruizu-sync/app/build/outputs/apk/release/app-release.apk
+
       - name: Static APK verification
         run: |
           set -euo pipefail
@@ -44,6 +60,10 @@ jobs:
           export PATH="$SDK/build-tools/35.0.0:$SDK/platform-tools:$PATH"
           cd android/ruizu-sync
           bash ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
+          bash ./tools/verify.sh app/build/outputs/apk/release/app-release.apk au.com.parristech.ruizusync.stable
+          if aapt2 dump badging app/build/outputs/apk/release/app-release.apk | grep -q 'application-debuggable'; then
+            echo 'ERROR: Signed stable APK is debuggable' >&2; exit 1
+          fi
 
       - name: Upload APK
         if: always()
@@ -51,6 +71,13 @@ jobs:
         with:
           name: ruizu-sync-debug-apk
           path: android/ruizu-sync/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload signed stable installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-sync-stable-signed-apk
+          path: android/ruizu-sync/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
   emulator:
@@ -80,7 +107,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ruizu-sync-debug-apk
+          name: ruizu-sync-stable-signed-apk
           path: apk
 
       - name: Install and launch on emulator
@@ -96,7 +123,7 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/emulator-smoke.sh apk/app-debug.apk
+          script: bash .github/scripts/emulator-smoke.sh apk/app-release.apk au.com.parristech.ruizusync.stable
 
 
       - name: Upload emulator evidence

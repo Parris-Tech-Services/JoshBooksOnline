@@ -9,13 +9,37 @@ android {
         minSdk 26
         // targetSdk 35: Android 15 enforces edge-to-edge, so MainActivity applies window insets.
         targetSdk 35
-        versionCode 4
-        versionName '1.2.0'
+        versionCode 5
+        versionName '1.2.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+
+    // Dedicated release key is injected only by trusted CI secrets.
+    // Never commit the keystore or hardcode its password in this repository.
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv('RELEASE_KEYSTORE')
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('RELEASE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('RELEASE_KEY_ALIAS')
+                keyPassword System.getenv('RELEASE_KEY_PASSWORD')
+            }
+        }
     }
 
     // Main's isolated fake-USB provider remains test-only, not part of the debug APK.
     buildTypes {
+        // Separate install identity avoids the incompatible random debug certificates
+        // from previous test APKs. This release identity must remain stable for updates.
+        release {
+            applicationIdSuffix '.stable'
+            minifyEnabled false
+            debuggable false
+            if (System.getenv('RELEASE_KEYSTORE')) {
+                signingConfig signingConfigs.release
+            }
+        }
         safTest {
             initWith debug
             applicationIdSuffix '.saftest'

@@ -4,8 +4,8 @@
 set -euo pipefail
 
 APK="${1:-apk/app-debug.apk}"
-PKG="au.com.parristech.ruizusync"
-ACTIVITY="$PKG/.ui.MainActivity"
+PKG="${2:-au.com.parristech.ruizusync}"
+ACTIVITY="$PKG/au.com.parristech.ruizusync.ui.MainActivity"
 
 echo "== install =="
 adb install -r "$APK"
