@@ -7,9 +7,13 @@ import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.net.Uri;
 
+import au.com.parristech.ruizusync.core.WavPcmReader;
+
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
@@ -31,6 +35,93 @@ public final class AudioTranscoder {
     /** @return true when an MP3 was written. On failure the partial target file is deleted. */
     public static boolean convertToMp3(Context context, Uri source, File target, int bitrateKbps,
                                        Progress progress) throws Exception {
+        if (isWav(context, source)) {
+            try (InputStream raw = context.getContentResolver().openInputStream(source)) {
+                if (raw == null) {
+                    throw new IOException("Cannot open the source file");
+                }
+                return convertWav(new BufferedInputStream(raw, 64 * 1024), target, bitrateKbps, progress);
+            }
+        }
+        return convertWithMediaCodec(context, source, target, bitrateKbps, progress);
+    }
+
+    private static boolean isWav(Context context, Uri source) {
+        try (InputStream raw = context.getContentResolver().openInputStream(source)) {
+            if (raw == null) {
+                return false;
+            }
+            byte[] head = new byte[12];
+            int read = 0;
+            while (read < head.length) {
+                int n = raw.read(head, read, head.length - read);
+                if (n < 0) {
+                    break;
+                }
+                read += n;
+            }
+            return read == head.length && WavPcmReader.looksLikeWav(head);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean convertWav(InputStream in, File target, int bitrateKbps,
+                                      Progress progress) throws Exception {
+        WavPcmReader.Format format = WavPcmReader.readFormat(in);
+        if (format.bitsPerSample != 16) {
+            throw new IOException("Only 16-bit PCM WAV can be converted (found "
+                    + format.bitsPerSample + "-bit)");
+        }
+        Mp3Encoder encoder = new Mp3Encoder();
+        encoder.open(format.sampleRate, format.channels, bitrateKbps);
+        FileOutputStream out = new FileOutputStream(target);
+        long total = format.dataBytes;
+        long[] done = {0L};
+        boolean complete = false;
+        try {
+            WavPcmReader.streamPcm(in, format, (buffer, length) -> {
+                int frameBytes = format.blockAlign();
+                int frames = length / frameBytes;
+                int[] left = new int[frames];
+                int[] right = format.channels == 1 ? left : new int[frames];
+                for (int i = 0; i < frames; i++) {
+                    int base = i * frameBytes;
+                    int l = (short) ((buffer[base] & 0xFF) | ((buffer[base + 1] & 0xFF) << 8));
+                    if (format.channels == 1) {
+                        left[i] = l;
+                    } else {
+                        int r = (short) ((buffer[base + 2] & 0xFF) | ((buffer[base + 3] & 0xFF) << 8));
+                        left[i] = l;
+                        right[i] = r;
+                    }
+                }
+                if (frames > 0) {
+                    encoder.encode(left, right, frames, out);
+                }
+                done[0] += length;
+                if (progress != null && total > 0) {
+                    progress.onProgress(Math.min(1.0, (double) done[0] / total));
+                }
+            });
+            encoder.close(out);
+            complete = true;
+            return true;
+        } finally {
+            try {
+                out.flush();
+                out.close();
+            } catch (Throwable ignored) {
+                // Best effort.
+            }
+            if (!complete) {
+                target.delete();
+            }
+        }
+    }
+
+    private static boolean convertWithMediaCodec(Context context, Uri source, File target,
+                                                 int bitrateKbps, Progress progress) throws Exception {
         MediaExtractor extractor = new MediaExtractor();
         MediaCodec decoder = null;
         FileOutputStream out = null;
