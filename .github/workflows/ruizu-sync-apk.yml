@@ -89,7 +89,7 @@ jobs:
             adb shell wm size 1080x2340
             adb shell wm density 450
             android/ruizu-sync/gradlew --no-daemon -p android/ruizu-sync :app:connectedSafTestAndroidTest
-            adb pull /sdcard/Android/data/au.com.parristech.ruizusync.saftest.test/files/ruizu-ui.png ruizu-ui.png
+            adb pull /sdcard/Android/data/au.com.parristech.ruizusync.saftest/files/ruizu-ui.png ruizu-ui.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:

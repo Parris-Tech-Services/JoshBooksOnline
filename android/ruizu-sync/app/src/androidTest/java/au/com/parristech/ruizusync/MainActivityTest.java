@@ -46,7 +46,7 @@ public final class MainActivityTest {
         getInstrumentation().runOnMainSync(()->assertTrue(contains(rotated.getWindow().getDecorView(),"Start transfer")));
         Bitmap bitmap=getInstrumentation().getUiAutomation().takeScreenshot();
         assertNotNull(bitmap);
-        File directory=getInstrumentation().getContext().getExternalFilesDir(null);
+        File directory=getInstrumentation().getTargetContext().getExternalFilesDir(null);
         try(FileOutputStream out=new FileOutputStream(new File(directory,"ruizu-ui.png"))) {
             bitmap.compress(Bitmap.CompressFormat.PNG,100,out);
         }

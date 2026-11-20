@@ -14,7 +14,7 @@ public final class SafTransferTest {
     private android.app.Instrumentation getInstrumentation() { return InstrumentationRegistry.getInstrumentation(); }
     private final Uri tree=DocumentsContract.buildTreeDocumentUri(FakeUsbProvider.AUTHORITY,"root");
     private Context context;
-    @Before public void setUp() throws Exception { context=getInstrumentation().getContext();
+    @Before public void setUp() throws Exception { context=getInstrumentation().getTargetContext();
         // Start provider in the instrumentation process before resetting its state.
         context.getContentResolver().query(DocumentsContract.buildDocumentUri(FakeUsbProvider.AUTHORITY,"root"),null,null,null,null).close();
         control("reset",null); context.getSharedPreferences("ruizu-pending",0).edit().clear().commit();
