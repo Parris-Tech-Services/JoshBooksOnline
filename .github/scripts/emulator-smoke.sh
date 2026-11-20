@@ -56,6 +56,23 @@ else
     echo "note: Start transfer not captured after scrolling (screen size dependent)"
 fi
 
+echo "== conversion self-test (WAV -> MP3 through MediaExtractor + LAME) =="
+adb logcat -c || true
+adb shell am start -W -n "$ACTIVITY" --es selftest convert >/dev/null 2>&1 || true
+sleep 15
+SELFTEST=$(adb logcat -d -s RUIZU-SELFTEST:I | grep "conversion selftest" | tail -1)
+echo "$SELFTEST"
+case "$SELFTEST" in
+    *"conversion selftest: OK"*) echo "conversion self-test passed" ;;
+    *)
+        echo "FAIL: conversion self-test did not pass"
+        adb logcat -d | grep -E "RUIZU-SELFTEST|FATAL EXCEPTION|AndroidRuntime" | tail -30 || true
+        exit 1
+        ;;
+esac
+adb shell input keyevent KEYCODE_BACK || true
+sleep 1
+
 echo "== screenshot =="
 adb exec-out screencap -p > emulator-launch.png
 [ -s emulator-launch.png ] || { echo "FAIL: screenshot empty"; exit 1; }

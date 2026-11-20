@@ -6,7 +6,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APK="${1:-$ROOT/dist/RUIZU-Sync-1.1.0-debug.apk}"
+APK="${1:-$ROOT/dist/RUIZU-Sync-1.2.0-debug.apk}"
 WORK="$ROOT/.build/verify"
 FAILURES=0
 
@@ -42,7 +42,8 @@ for dex in "$WORK"/dex/classes*.dex; do
 done
 ok "dex magic valid"
 for cls in ui/MainActivity TransferService TransferManager net/RemoteAudio net/FeedScanner \
-           core/DuplicateMatcher core/FolderPlanner core/MediaTypes 'core/FolderPlanner$OrganiseMode'; do
+           core/DuplicateMatcher core/FolderPlanner core/MediaTypes 'core/FolderPlanner$OrganiseMode' \
+           audio/Mp3Encoder audio/AudioTranscoder core/Opml core/ConversionPolicy; do
   found=no
   for dex in "$WORK"/dex/classes*.dex; do
     if [ -f "$dex" ] && grep -a -qF "Lau/com/parristech/ruizusync/$cls;" "$dex"; then

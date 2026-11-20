@@ -153,6 +153,71 @@ public final class RemoteAudio {
         }
     }
 
+    public interface DownloadProgress {
+        void onProgress(long done, long total);
+    }
+
+    /**
+     * Downloads an audio file to cache with HTTP Range resume: an interrupted download continues
+     * from the bytes already on disk. Returns the number of bytes in the finished file.
+     */
+    public static long downloadToFile(String url, java.io.File target, DownloadProgress progress)
+            throws IOException {
+        java.io.File part = new java.io.File(target.getPath() + ".part");
+        long existing = part.isFile() ? part.length() : 0L;
+        HttpURLConnection connection = connect(new URL(url), "GET",
+                existing > 0 ? "bytes=" + existing + "-" : null);
+        try {
+            int code = connection.getResponseCode();
+            boolean append = code == 206 && existing > 0;
+            if (code != 200 && code != 206) {
+                throw new IOException("Download failed with HTTP " + code);
+            }
+            String mime = normalizeMime(connection.getContentType());
+            if (!isAudioContentType(mime)) {
+                throw new IOException("The link did not return an audio file ("
+                        + (mime.isEmpty() ? "unknown content type" : mime) + ")");
+            }
+            long total;
+            if (append) {
+                long tail = parseContentRange(connection.getHeaderField("Content-Range"));
+                total = tail > 0 ? tail : existing + connection.getContentLengthLong();
+            } else {
+                existing = 0;
+                total = connection.getContentLengthLong();
+            }
+            if (total > MAX_BYTES) {
+                throw new IOException("File exceeds the 2 GB transfer limit");
+            }
+            long written = existing;
+            try (InputStream in = connection.getInputStream();
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(part, append)) {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    written += read;
+                    if (written > MAX_BYTES) {
+                        throw new IOException("File exceeds the 2 GB transfer limit");
+                    }
+                    out.write(buffer, 0, read);
+                    if (progress != null) {
+                        progress.onProgress(written, total);
+                    }
+                }
+                out.getFD().sync();
+            }
+            if (target.exists() && !target.delete()) {
+                throw new IOException("Cannot replace " + target.getName());
+            }
+            if (!part.renameTo(target)) {
+                throw new IOException("Cannot finish writing " + target.getName());
+            }
+            return written;
+        } finally {
+            connection.disconnect();
+        }
+    }
+
     public static String nameFromUrl(Uri uri) {
         String path = uri.getPath();
         String segment = "";
@@ -233,6 +298,10 @@ public final class RemoteAudio {
     }
 
     private static HttpURLConnection connect(URL url, String method) throws IOException {
+        return connect(url, method, null);
+    }
+
+    private static HttpURLConnection connect(URL url, String method, String range) throws IOException {
         URL current = url;
         for (int attempt = 0; attempt <= MAX_REDIRECTS; attempt++) {
             String protocol = current.getProtocol();
@@ -245,6 +314,9 @@ public final class RemoteAudio {
             connection.setReadTimeout(READ_TIMEOUT_MS);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("User-Agent", USER_AGENT);
+            if (range != null) {
+                connection.setRequestProperty("Range", range);
+            }
             int code = connection.getResponseCode();
             if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
                 String location = connection.getHeaderField("Location");

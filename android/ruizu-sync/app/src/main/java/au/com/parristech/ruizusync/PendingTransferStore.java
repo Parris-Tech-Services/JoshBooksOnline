@@ -54,6 +54,7 @@ public final class PendingTransferStore {
             root.put("verify", request.verifyAfterCopy);
             root.put("scopeFolder", request.duplicatesInTargetFolderOnly);
             root.put("playlists", request.writePlaylists);
+            root.put("convert", request.convertToMp3);
             root.put("processed", processed);
             root.put("savedAt", System.currentTimeMillis());
             JSONArray sources = new JSONArray();
@@ -125,7 +126,8 @@ public final class PendingTransferStore {
                     sources, dest, organise, duplicates,
                     root.optBoolean("verify", true),
                     root.optBoolean("scopeFolder", false),
-                    root.optBoolean("playlists", false));
+                    root.optBoolean("playlists", false),
+                    "", null, root.optBoolean("convert", false), null);
             return new Pending(request, root.optInt("processed", 0), root.optLong("savedAt", 0));
         } catch (Throwable ignored) {
             return null;

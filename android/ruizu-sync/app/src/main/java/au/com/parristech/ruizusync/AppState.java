@@ -32,6 +32,7 @@ public final class AppState {
     private boolean verifyAfterCopy = true;
     private boolean duplicatesInTargetFolderOnly = false;
     private boolean writePlaylists = false;
+    private boolean convertToMp3 = false;
 
     private AppState() {
     }
@@ -125,5 +126,13 @@ public final class AppState {
 
     public synchronized void setWritePlaylists(boolean value) {
         writePlaylists = value;
+    }
+
+    public synchronized boolean convertToMp3() {
+        return convertToMp3;
+    }
+
+    public synchronized void setConvertToMp3(boolean value) {
+        convertToMp3 = value;
     }
 }

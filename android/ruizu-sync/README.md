@@ -1,4 +1,4 @@
-# RUIZU Sync (Android) — 1.1.0
+# RUIZU Sync (Android) — 1.2.0
 
 Native, no-root companion for transferring music and podcasts from a Samsung phone (or Google
 Drive) to a RUIZU 64 GB MP3 player over USB. It is an independent Android app inside
@@ -44,6 +44,26 @@ first revision are preserved and run on top of that engine.
 The app never deletes unrelated player files, never formats storage, and deletes a partially
 written file when a copy fails or is cancelled.
 
+## New in 1.2.0
+
+- **Named playlists** — save the current queue as a playlist, reload it later, and export it to the
+  player. Export copies the tracks and writes a player-compatible `.m3u` (relative paths) into the
+  player folder.
+- **Podcast subscriptions with advance downloads** — save feeds, then *Download new* fetches each
+  feed (streamed, early-stop), downloads up to five unseen episodes to the phone using HTTP Range
+  resume, and queues them for the player. Episodes are ready while the RUIZU is disconnected.
+- **OPML import/export** — import subscriptions from AntennaPod or any podcast app, and export an
+  OPML file (via the system file picker) for backup or for another app.
+- **Automatic MP3 conversion** — optional. Non-MP3 sources are decoded with `MediaCodec`
+  (including a raw-PCM fast path for WAV) and re-encoded with the pure-Java LAME port (jump3r)
+  before copying; the original file is never modified. Failures fall back to copying the original.
+- **Saved transfer plan (folder pair)** — remember source folder → player folder plus all options,
+  run it with one tap, and optionally get asked to run it when the player connects.
+- **Durable history** — transfer runs are appended to `transfer-history.jsonl` and survive
+  restarts; the last three runs and a copyable log are shown in the app.
+- **Resumable downloads** — interrupted HTTPS episode downloads continue from the bytes already on
+  disk (`Range` + `.part` file) instead of starting over.
+
 ## Supported formats
 
 MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF. Anything else is reported as skipped.
@@ -64,6 +84,15 @@ MP3 is the safest choice across RUIZU models; check the player manual for APE/OG
   (once to hash, once to copy).
 - Android may kill the app under memory pressure; the foreground service keeps a transfer alive
   in normal use and the queue is persisted for resume, but there is no overnight download manager.
+- **Conversion is software MP3 encoding** (LAME in Java): it is CPU-bound and slower than native
+  codecs, and it only produces MP3. It runs on the phone, so it works while the player is
+  disconnected. Lossy sources are re-encoded (slight quality loss); the original is kept on the
+  phone and never modified on the player.
+- **Automatic downloads** are capped at five new episodes per *Download new* press and require the
+  app to be running (no background scheduler yet).
+- **USB writes cannot be resumed** mid-file: the Storage Access Framework offers no reliable
+  append/offset contract. Only HTTPS downloads resume; interrupted copies restart that one file.
+- One saved plan is supported (one source folder → one player folder).
 
 ## Build
 
@@ -92,9 +121,9 @@ bundled compiler.
 
 | Level | What runs |
 | --- | --- |
-| JVM core | 164 checks: formatting, formats/MIME mapping, name sanitising, folder planning incl. Music/Podcasts, duplicate matching incl. folder-scoped, index bookkeeping, playlist generation, stats/retry counters, hashing |
+| JVM core | 199 checks: formatting, formats/MIME mapping, name sanitising, folder planning incl. Music/Podcasts, duplicate matching incl. folder-scoped, index bookkeeping, playlist generation, stats/retry counters, hashing |
 | JVM pipeline | 35 checks driving planner → sanitise → dedupe → collision → counters against an in-memory player |
-| JVM feed | 15 JUnit tests incl. streaming chunk boundaries and early stop on 400-episode feeds |
+| JVM feed + encoder | 16 JUnit tests incl. streaming chunk boundaries and early stop on 400-episode feeds |
 | JVM utils | Original `TransferUtils` behaviour |
 | APK static | v2/v3 signature, 4-byte alignment, manifest (`exported`, FGS type, permissions), single- or multi-dex payload |
 | Emulator (API 34, KVM) | **passing in CI**: installs, `MainActivity` gains window focus, expected labels render, screenshot captured, crash buffer clean |
@@ -119,13 +148,13 @@ player. Confirm on the phone + player:
 8. Podcast feed (including a large one), direct link and share-intent imports land in the right
    folder; M3U playlists appear and play.
 
-## Still to do (not in 1.1.0)
+## Still to do (not in 1.2.0)
 
-- Parallel copies for many small files (currently serial, deliberately, to keep progress and
-  verification bookkeeping correct).
-- Podcast subscriptions with a background scheduler and new-episode notifications (manual feed
-  browsing only today).
+- Parallel copies for many small files (serial on purpose, to keep progress/verification correct).
+- Background scheduler + new-episode notifications for subscriptions (today: manual *Download new*).
 - Migration from `dataSync` foreground service to Android 14+ user-initiated data transfer jobs.
+- Volume normalisation and cover-art embedding/resizing for converted copies.
+- Multiple saved plans and per-feed download rules.
 - Full string localisation (UI strings are still inline in Java).
 - Instrumented SAF test with a fake `DocumentsProvider` (biggest remaining coverage gap).
 - Release signing via CI secrets and R8 minification for distribution.

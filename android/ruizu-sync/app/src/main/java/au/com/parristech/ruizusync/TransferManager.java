@@ -6,7 +6,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 
+import au.com.parristech.ruizusync.audio.AudioTranscoder;
 import au.com.parristech.ruizusync.core.ByteFormat;
+import au.com.parristech.ruizusync.core.ConversionPolicy;
 import au.com.parristech.ruizusync.core.DestEntry;
 import au.com.parristech.ruizusync.core.DestIndex;
 import au.com.parristech.ruizusync.core.DuplicateCheck;
@@ -23,6 +25,7 @@ import au.com.parristech.ruizusync.io.DestRepo;
 import au.com.parristech.ruizusync.io.SourceRepo;
 import au.com.parristech.ruizusync.model.SourceItem;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -71,16 +74,30 @@ public final class TransferManager {
         public final boolean verifyAfterCopy;
         public final boolean duplicatesInTargetFolderOnly;
         public final boolean writePlaylists;
+        public final String playlistName;
+        public final List<String> destinationPrefix;
+        public final boolean convertToMp3;
+        public final java.util.Set<String> convertFormats;
 
         public Request(List<SourceItem> sources, Uri destTree,
                        FolderPlanner.OrganiseMode organiseMode, DuplicateMode duplicateMode) {
-            this(sources, destTree, organiseMode, duplicateMode, false, false, false);
+            this(sources, destTree, organiseMode, duplicateMode, false, false, false,
+                    "", null, false, null);
         }
 
         public Request(List<SourceItem> sources, Uri destTree,
                        FolderPlanner.OrganiseMode organiseMode, DuplicateMode duplicateMode,
                        boolean verifyAfterCopy, boolean duplicatesInTargetFolderOnly,
                        boolean writePlaylists) {
+            this(sources, destTree, organiseMode, duplicateMode, verifyAfterCopy,
+                    duplicatesInTargetFolderOnly, writePlaylists, "", null, false, null);
+        }
+
+        public Request(List<SourceItem> sources, Uri destTree,
+                       FolderPlanner.OrganiseMode organiseMode, DuplicateMode duplicateMode,
+                       boolean verifyAfterCopy, boolean duplicatesInTargetFolderOnly,
+                       boolean writePlaylists, String playlistName, List<String> destinationPrefix,
+                       boolean convertToMp3, java.util.Set<String> convertFormats) {
             this.sources = sources;
             this.destTree = destTree;
             this.organiseMode = organiseMode == null ? FolderPlanner.OrganiseMode.FLAT : organiseMode;
@@ -88,6 +105,12 @@ public final class TransferManager {
             this.verifyAfterCopy = verifyAfterCopy;
             this.duplicatesInTargetFolderOnly = duplicatesInTargetFolderOnly;
             this.writePlaylists = writePlaylists;
+            this.playlistName = playlistName == null ? "" : playlistName;
+            this.destinationPrefix = destinationPrefix == null
+                    ? java.util.Collections.<String>emptyList() : destinationPrefix;
+            this.convertToMp3 = convertToMp3;
+            this.convertFormats = convertFormats == null
+                    ? ConversionPolicy.LOSSY_OR_ODD_FORMATS : convertFormats;
         }
     }
 
@@ -314,7 +337,10 @@ public final class TransferManager {
                     // Nothing to do.
                 }
             }
-            HistoryStore.saveLastRun(context, statusText, snapshotLogText(), System.currentTimeMillis());
+            HistoryStore.record(context, new HistoryStore.Run(System.currentTimeMillis(), statusText,
+                    stats.getCopiedFiles(), stats.getFailedFiles(), stats.getDuplicateFiles(),
+                    stats.getUnsupportedFiles(), stats.getRetriedFiles(), stats.getPlaylistsWritten(),
+                    snapshotLogText()));
             deliver(true);
         }
     }
@@ -335,6 +361,7 @@ public final class TransferManager {
         Map<String, DestRepo.Node> nodesByPath = new HashMap<>();
         Map<String, DestRepo.Node> folderNodes = new HashMap<>();
         Set<String> foldersTouched = new LinkedHashSet<>();
+        List<String> copiedPaths = new ArrayList<>();
         for (DestRepo.Node node : existing) {
             index.add(new DestEntry(node.relPath, node.name, node.size));
             nodesByPath.put(node.relPath.toLowerCase(Locale.ROOT), node);
@@ -358,7 +385,7 @@ public final class TransferManager {
             checkCancelled();
             try {
                 transferOne(sourceRepo, destRepo, request, index, nodesByPath, folderNodes,
-                        foldersTouched, item);
+                        foldersTouched, copiedPaths, item);
             } catch (CancelledException e) {
                 throw e;
             } catch (Throwable t) {
@@ -376,6 +403,9 @@ public final class TransferManager {
         if (request.writePlaylists) {
             writePlaylists(destRepo, index, foldersTouched, folderNodes);
         }
+        if (!request.playlistName.isEmpty()) {
+            writeNamedPlaylist(destRepo, copiedPaths, request.playlistName);
+        }
 
         checkCancelled();
         phase = PHASE_DONE;
@@ -387,7 +417,8 @@ public final class TransferManager {
 
     private void transferOne(SourceRepo sourceRepo, DestRepo destRepo, Request request, DestIndex index,
                              Map<String, DestRepo.Node> nodesByPath, Map<String, DestRepo.Node> folderNodes,
-                             Set<String> foldersTouched, SourceItem item) throws Exception {
+                             Set<String> foldersTouched, List<String> copiedPaths, SourceItem item)
+            throws Exception {
         stats.beginFile(item.displayName, item.size);
 
         if (item.problem != null && !item.problem.isEmpty()) {
@@ -414,13 +445,52 @@ public final class TransferManager {
             album = tags.album;
         }
         List<String> segments = FolderPlanner.folderSegments(request.organiseMode, artist, album,
-                item.sourceFolder, item.treeRelDirs);
+                item.sourceFolder, item.treeRelDirs, request.destinationPrefix);
         DestRepo.Node targetDir = destRepo.ensureDir(segments);
         folderNodes.put(targetDir.relPath.toLowerCase(Locale.ROOT), targetDir);
 
-        String desiredName = FileNameSanitizer.fileName(item.displayName);
+        Uri sourceUri = item.uri;
+        String sourceDisplayName = item.displayName;
+        long effectiveSize = item.size;
+        File convertedFile = null;
+        try {
+            if (request.convertToMp3
+                    && ConversionPolicy.shouldConvert(item.displayName, true, request.convertFormats)) {
+                convertedFile = new File(context.getCacheDir(), "convert-" + System.nanoTime() + ".mp3");
+                try {
+                    log("Converting to MP3: " + item.displayName);
+                    boolean converted = AudioTranscoder.convertToMp3(context, item.uri, convertedFile,
+                            ConversionPolicy.DEFAULT_BITRATE_KBPS, null);
+                    if (converted && convertedFile.length() > 0) {
+                        sourceUri = Uri.fromFile(convertedFile);
+                        sourceDisplayName = ConversionPolicy.convertedName(item.displayName);
+                        effectiveSize = convertedFile.length();
+                    } else {
+                        log("Conversion produced no audio; copying the original instead");
+                    }
+                } catch (Throwable conversionError) {
+                    log("Conversion failed, copying the original: " + describe(conversionError));
+                }
+            }
+            transferCopyPhase(sourceRepo, destRepo, request, index, nodesByPath, folderNodes,
+                    foldersTouched, copiedPaths, item, targetDir, segments, sourceUri,
+                    sourceDisplayName, effectiveSize);
+        } finally {
+            if (convertedFile != null) {
+                convertedFile.delete();
+            }
+        }
+    }
+
+    private void transferCopyPhase(SourceRepo sourceRepo, DestRepo destRepo, Request request,
+                                   DestIndex index, Map<String, DestRepo.Node> nodesByPath,
+                                   Map<String, DestRepo.Node> folderNodes, Set<String> foldersTouched,
+                                   List<String> copiedPaths, SourceItem item, DestRepo.Node targetDir,
+                                   List<String> segments, Uri sourceUri, String sourceDisplayName,
+                                   long effectiveSize) throws Exception {
+        String desiredName = FileNameSanitizer.fileName(sourceDisplayName);
         DuplicateCheck duplicate = DuplicateMatcher.check(
-                new SourceFileInfo(desiredName, item.size, () -> hashSource(sourceRepo, item.uri)),
+                new SourceFileInfo(desiredName, effectiveSize, () -> hashSource(sourceRepo, sourceUri)),
                 index,
                 request.duplicateMode.exactHash(),
                 entry -> {
@@ -447,7 +517,8 @@ public final class TransferManager {
 
         CopyResult result;
         try {
-            result = copyWithRetry(sourceRepo, destRepo, item, targetDir, request.verifyAfterCopy);
+            result = copyWithRetry(sourceRepo, destRepo, item, sourceUri, sourceDisplayName,
+                    effectiveSize, targetDir, request.verifyAfterCopy);
         } catch (CancelledException e) {
             throw e;
         } catch (Exception e) {
@@ -458,6 +529,7 @@ public final class TransferManager {
         }
 
         stats.finishFile(TransferStats.Outcome.COPIED);
+        copiedPaths.add(result.node.relPath);
         index.add(new DestEntry(result.node.relPath, result.node.name, result.bytes));
         nodesByPath.put(result.node.relPath.toLowerCase(Locale.ROOT), result.node);
         foldersTouched.add(targetDir.relPath.toLowerCase(Locale.ROOT));
@@ -468,8 +540,9 @@ public final class TransferManager {
     }
 
     private CopyResult copyWithRetry(SourceRepo sourceRepo, DestRepo destRepo, SourceItem item,
+                                     Uri sourceUri, String sourceDisplayName, long effectiveSize,
                                      DestRepo.Node targetDir, boolean verify) throws Exception {
-        String desiredName = FileNameSanitizer.fileName(item.displayName);
+        String desiredName = FileNameSanitizer.fileName(sourceDisplayName);
         IOException lastError = null;
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             checkCancelled();
@@ -487,7 +560,8 @@ public final class TransferManager {
                 log("Name already used, saving as: " + targetName);
             }
             try {
-                return copyOnce(sourceRepo, destRepo, item, targetDir, targetName, verify);
+                return copyOnce(sourceRepo, destRepo, item, sourceUri, sourceDisplayName, effectiveSize,
+                        targetDir, targetName, verify);
             } catch (CancelledException e) {
                 throw e;
             } catch (IOException e) {
@@ -501,15 +575,16 @@ public final class TransferManager {
     }
 
     private CopyResult copyOnce(SourceRepo sourceRepo, DestRepo destRepo, SourceItem item,
+                                Uri sourceUri, String sourceDisplayName, long effectiveSize,
                                 DestRepo.Node targetDir, String targetName, boolean verify) throws Exception {
-        checkFreeSpace(item);
+        checkFreeSpace(effectiveSize);
         DestRepo.Node created = destRepo.createFile(targetDir, targetName,
-                MediaTypes.mimeTypeFor(item.displayName));
+                MediaTypes.mimeTypeFor(sourceDisplayName));
         long written = 0;
         boolean complete = false;
         try {
             MessageDigest digest = verify ? newDigest() : null;
-            try (InputStream in = sourceRepo.open(item.uri);
+            try (InputStream in = sourceRepo.open(sourceUri);
                  OutputStream out = destRepo.openWrite(created)) {
                 byte[] buffer = new byte[256 * 1024];
                 int read;
@@ -548,10 +623,10 @@ public final class TransferManager {
         }
     }
 
-    private void checkFreeSpace(SourceItem item) throws IOException {
+    private void checkFreeSpace(long neededBytes) throws IOException {
         long free = remainingFreeBytes;
-        if (free >= 0 && item.size > 0 && item.size > free) {
-            throw new IOException("Not enough free space: need " + ByteFormat.bytes(item.size)
+        if (free >= 0 && neededBytes > 0 && neededBytes > free) {
+            throw new IOException("Not enough free space: need " + ByteFormat.bytes(neededBytes)
                     + " but only " + ByteFormat.bytes(free) + " is available");
         }
     }
@@ -617,6 +692,29 @@ public final class TransferManager {
             } catch (Throwable t) {
                 log("Could not write a playlist in " + where + ": " + describe(t));
             }
+        }
+    }
+
+    private void writeNamedPlaylist(DestRepo destRepo, List<String> copiedPaths, String name) {
+        if (copiedPaths.isEmpty()) {
+            return;
+        }
+        String fileName = FileNameSanitizer.fileName(name + ".m3u");
+        try {
+            DestRepo.Node existing = destRepo.findChild(destRepo.root(), fileName);
+            if (existing != null) {
+                destRepo.delete(existing);
+            }
+            DestRepo.Node playlist = destRepo.createFile(destRepo.root(), fileName,
+                    PlaylistWriter.mimeType());
+            try (OutputStream out = destRepo.openWrite(playlist)) {
+                out.write(PlaylistWriter.buildM3uFromPaths(copiedPaths)
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            stats.markPlaylistWritten();
+            log("Wrote playlist " + fileName + " (" + copiedPaths.size() + " tracks)");
+        } catch (Throwable t) {
+            log("Could not write playlist " + fileName + ": " + describe(t));
         }
     }
 

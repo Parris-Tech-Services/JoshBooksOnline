@@ -22,17 +22,23 @@ if [ ! -s "$HAMCREST" ]; then
 fi
 
 # The JVM-testable subset: no android.* imports.
-find "$SRC/core" "$SRC/net/FeedScanner.java" "$SRC/TransferUtils.java" -name '*.java' | sort > "$BUILD/main-sources.txt"
+LIB_CP=""
+for jar in "$ROOT"/libs/*.jar; do
+  [ -f "$jar" ] && LIB_CP="$LIB_CP:$jar"
+done
+find "$SRC/core" "$SRC/net/FeedScanner.java" "$SRC/audio/Mp3Encoder.java" "$SRC/TransferUtils.java" \
+  -name '*.java' | sort > "$BUILD/main-sources.txt"
 echo "Compiling $(wc -l < "$BUILD/main-sources.txt") main source files..."
-javac --release 17 -encoding UTF-8 -d "$BUILD/classes" @"$BUILD/main-sources.txt"
+javac --release 17 -encoding UTF-8 -classpath ".$LIB_CP" -d "$BUILD/classes" @"$BUILD/main-sources.txt"
 
 find "$TEST" -name '*.java' | sort > "$BUILD/test-sources.txt"
 echo "Compiling $(wc -l < "$BUILD/test-sources.txt") test source files..."
-javac --release 17 -encoding UTF-8 -classpath "$BUILD/classes:$JUNIT:$HAMCREST" \
+javac --release 17 -encoding UTF-8 -classpath "$BUILD/classes:$JUNIT:$HAMCREST$LIB_CP" \
   -d "$BUILD/test-classes" @"$BUILD/test-sources.txt"
 
 echo "Running JUnit suites..."
-java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST" org.junit.runner.JUnitCore \
+java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST$LIB_CP" org.junit.runner.JUnitCore \
   au.com.parristech.ruizusync.core.LogicGradleTests \
   au.com.parristech.ruizusync.net.FeedScannerTest \
+  au.com.parristech.ruizusync.audio.Mp3EncoderTest \
   au.com.parristech.ruizusync.TransferUtilsTest

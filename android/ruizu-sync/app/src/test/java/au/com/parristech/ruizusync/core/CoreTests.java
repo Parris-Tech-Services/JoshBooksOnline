@@ -26,8 +26,12 @@ public final class CoreTests {
         fileNameSanitizerPaths();
         folderPlanner();
         folderPlannerMusicAndPodcasts();
+        folderPlannerDestinationPrefix();
         nameCollision();
         playlistWriter();
+        playlistWriterPaths();
+        opmlImportExport();
+        conversionPolicy();
         destIndexBasics();
         destIndexRemove();
         destIndexFolders();
@@ -201,6 +205,83 @@ public final class CoreTests {
         checkEquals("music mode ignores tags", Arrays.asList("Music"),
                 FolderPlanner.folderSegments(FolderPlanner.OrganiseMode.MUSIC_PODCASTS,
                         "Artist", "Album", null, null));
+    }
+
+    private static void folderPlannerDestinationPrefix() {
+        checkEquals("prefix + flat", Arrays.asList("Music", "Audiobooks"),
+                FolderPlanner.folderSegments(FolderPlanner.OrganiseMode.FLAT, null, null, "", null,
+                        Arrays.asList("Music", "Audiobooks")));
+        checkEquals("prefix sanitised", Arrays.asList("Music", "Audio-books"),
+                FolderPlanner.folderSegments(FolderPlanner.OrganiseMode.FLAT, null, null, "", null,
+                        Arrays.asList("Music", "Audio:books")));
+        checkEquals("empty prefix ignored", Arrays.asList("Artist", "Album"),
+                FolderPlanner.folderSegments(FolderPlanner.OrganiseMode.ARTIST_ALBUM, "Artist", "Album",
+                        "", null, Collections.<String>emptyList()));
+        checkEquals("null prefix ignored", Collections.<String>emptyList(),
+                FolderPlanner.folderSegments(FolderPlanner.OrganiseMode.FLAT, null, null, "", null, null));
+        checkEquals("prefix + artist album", Arrays.asList("Podcasts", "Artist", "Album"),
+                FolderPlanner.folderSegments(FolderPlanner.OrganiseMode.ARTIST_ALBUM, "Artist", "Album",
+                        "", null, Collections.singletonList("Podcasts")));
+    }
+
+    private static void playlistWriterPaths() {
+        String playlist = PlaylistWriter.buildM3uFromPaths(
+                Arrays.asList("Rock/Album/01.mp3", "Podcasts/ep1.mp3"));
+        check("relpath playlist header", playlist.startsWith("#EXTM3U\n"));
+        check("relpath keeps folder", playlist.contains("Rock/Album/01.mp3\n"));
+        check("relpath title from base name", playlist.contains("#EXTINF:-1,01\n"));
+        check("relpath podcasts", playlist.contains("Podcasts/ep1.mp3\n"));
+        checkEquals("relpath empty", "#EXTM3U\n",
+                PlaylistWriter.buildM3uFromPaths(Collections.<String>emptyList()));
+        checkEquals("relpath null", "#EXTM3U\n", PlaylistWriter.buildM3uFromPaths(null));
+        String skipped = PlaylistWriter.buildM3uFromPaths(Arrays.asList("", null, "a/b.mp3"));
+        check("relpath skips blanks", skipped.contains("a/b.mp3") && skipped.split("\n").length == 3);
+    }
+
+    private static void opmlImportExport() {
+        String opml = "<?xml version=\"1.0\"?><opml version=\"2.0\"><body>"
+                + "<outline text=\"Show A\" title=\"Show A\" type=\"rss\" xmlUrl=\"https://a.example/feed\"/>"
+                + "<outline text=\"Group\">"
+                + "<outline text=\"Show B\" xmlUrl='https://b.example/feed'/>"
+                + "</outline>"
+                + "<outline text=\"No url\"/>"
+                + "</body></opml>";
+        List<Opml.Feed> feeds = Opml.parse(opml);
+        checkEquals("opml feed count", 2, feeds.size());
+        checkEquals("opml title", "Show A", feeds.get(0).title);
+        checkEquals("opml url", "https://a.example/feed", feeds.get(0).url);
+        checkEquals("opml single quotes", "https://b.example/feed", feeds.get(1).url);
+
+        String generated = Opml.generate(feeds);
+        check("opml generated header", generated.contains("<opml version=\"2.0\">"));
+        check("opml generated url", generated.contains("xmlUrl=\"https://a.example/feed\""));
+        List<Opml.Feed> roundTrip = Opml.parse(generated);
+        checkEquals("opml round trip", 2, roundTrip.size());
+        checkEquals("opml round trip title", "Show B", roundTrip.get(1).title);
+        check("opml detects document", Opml.looksLikeOpml(generated));
+        check("opml reject html", !Opml.looksLikeOpml("<html></html>"));
+        checkEquals("opml escapes title", true,
+                Opml.generate(Collections.singletonList(new Opml.Feed("A & B", "https://x/y")))
+                        .contains("A &amp; B"));
+        checkEquals("opml empty", 0, Opml.parse("").size());
+        checkEquals("opml null", 0, Opml.parse(null).size());
+    }
+
+    private static void conversionPolicy() {
+        check("convert ogg when enabled", ConversionPolicy.shouldConvert("song.ogg", true, null));
+        check("never convert mp3", !ConversionPolicy.shouldConvert("song.mp3", true, null));
+        check("no convert when disabled", !ConversionPolicy.shouldConvert("song.flac", false, null));
+        check("convert only listed", ConversionPolicy.shouldConvert("song.ogg", true,
+                Collections.singleton("ogg")));
+        check("skip unlisted", !ConversionPolicy.shouldConvert("song.flac", true,
+                Collections.singleton("ogg")));
+        check("no extension never converts", !ConversionPolicy.shouldConvert("noext", true, null));
+        checkEquals("converted name", "song.mp3", ConversionPolicy.convertedName("song.ogg"));
+        checkEquals("converted name keeps base", "My Song.mp3",
+                ConversionPolicy.convertedName("My Song.flac"));
+        check("lossy format list has ogg", ConversionPolicy.LOSSY_OR_ODD_FORMATS.contains("ogg"));
+        checkEquals("describe formats", "OGG, FLAC",
+                ConversionPolicy.describe(new java.util.LinkedHashSet<>(Arrays.asList("ogg", "flac"))));
     }
 
     // ---- NameCollision --------------------------------------------------------------------

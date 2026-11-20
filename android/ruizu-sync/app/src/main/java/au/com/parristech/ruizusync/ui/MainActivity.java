@@ -36,7 +36,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import au.com.parristech.ruizusync.AppState;
+import au.com.parristech.ruizusync.audio.ConversionSelfTest;
 import au.com.parristech.ruizusync.HistoryStore;
+import au.com.parristech.ruizusync.PlaylistStore;
+import au.com.parristech.ruizusync.SyncPlanStore;
+import au.com.parristech.ruizusync.SubscriptionStore;
 import au.com.parristech.ruizusync.PendingTransferStore;
 import au.com.parristech.ruizusync.PlayerFolderStore;
 import au.com.parristech.ruizusync.R;
@@ -46,7 +50,9 @@ import au.com.parristech.ruizusync.TransferService;
 import au.com.parristech.ruizusync.core.ByteFormat;
 import au.com.parristech.ruizusync.core.DuplicateMode;
 import au.com.parristech.ruizusync.core.FolderPlanner;
+import au.com.parristech.ruizusync.core.FileNameSanitizer;
 import au.com.parristech.ruizusync.core.MediaTypes;
+import au.com.parristech.ruizusync.core.Opml;
 import au.com.parristech.ruizusync.io.DestRepo;
 import au.com.parristech.ruizusync.io.SourceRepo;
 import au.com.parristech.ruizusync.model.SourceItem;
@@ -54,6 +60,11 @@ import au.com.parristech.ruizusync.net.FeedScanner;
 import au.com.parristech.ruizusync.net.RemoteAudio;
 import au.com.parristech.ruizusync.usb.UsbVolumes;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -70,7 +81,10 @@ public final class MainActivity extends Activity implements TransferManager.List
     private static final int REQ_ADD_FILES = 1001;
     private static final int REQ_ADD_FOLDER = 1002;
     private static final int REQ_DEST_TREE = 1003;
+    private static final int REQ_IMPORT_OPML = 1004;
+    private static final int REQ_EXPORT_OPML = 1005;
     private static final int REQ_NOTIFICATIONS = 2001;
+    private static final int MAX_AUTO_DOWNLOADS = 5;
     private static final int MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT;
 
@@ -108,10 +122,18 @@ public final class MainActivity extends Activity implements TransferManager.List
     private CheckBox verifyCheck;
     private CheckBox scopeCheck;
     private CheckBox playlistCheck;
+    private CheckBox convertCheck;
     private Button retryButton;
     private Button copyLogButton;
     private TextView lastRunText;
     private ScrollView contentScroll;
+    private EditText playlistNameInput;
+    private Spinner playlistSpinner;
+    private ArrayAdapter<String> playlistAdapter;
+    private TextView subscriptionStatus;
+    private TextView planStatus;
+    private CheckBox planEnabledCheck;
+    private boolean planOffered;
 
     private List<UsbVolumes.Info> usbVolumes = Collections.emptyList();
     private long destFreeBytes = -1;
@@ -127,6 +149,9 @@ public final class MainActivity extends Activity implements TransferManager.List
         sourceRepo = new SourceRepo(this);
         buildUi();
         syncOptionViews();
+        refreshPlaylistSpinner();
+        refreshSubscriptionStatus();
+        refreshPlanStatus();
         updateLastRunText();
         renderSelections();
         render(manager.snapshot());
@@ -134,6 +159,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         ensureNotificationPermission();
         handleShareIntent(getIntent());
         maybeOfferResume();
+        maybeRunSelfTest(getIntent());
     }
 
     @Override
@@ -168,6 +194,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);
+        maybeRunSelfTest(intent);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -288,6 +315,9 @@ public final class MainActivity extends Activity implements TransferManager.List
         playlistCheck = choice("Write M3U playlists for each folder", state.writePlaylists(),
                 (button, checked) -> state.setWritePlaylists(checked));
         optionsCard.addView(playlistCheck);
+        convertCheck = choice("Convert non-MP3 audio to MP3 (originals untouched)",
+                state.convertToMp3(), (button, checked) -> state.setConvertToMp3(checked));
+        optionsCard.addView(convertCheck);
         root.addView(optionsCard);
 
         root.addView(sectionHeader("4 · Podcasts & audio links"));
@@ -315,6 +345,91 @@ public final class MainActivity extends Activity implements TransferManager.List
         linkRow.addView(audioLinkPodcastButton, podcastParams);
         linkCard.addView(linkRow);
         root.addView(linkCard);
+
+        root.addView(sectionHeader("5 · Playlists"));
+        LinearLayout playlistCard = card();
+        playlistNameInput = new EditText(this);
+        playlistNameInput.setHint("Playlist name (e.g. Road Trip)");
+        playlistNameInput.setSingleLine(true);
+        playlistNameInput.setTextSize(13);
+        playlistCard.addView(playlistNameInput, margins(0, 0, 0, dp(8)));
+        LinearLayout playlistSaveRow = new LinearLayout(this);
+        playlistSaveRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button savePlaylist = secondaryButton("Save selection", v -> savePlaylist());
+        Button exportPlaylist = secondaryButton("Export selected", v -> exportPlaylist());
+        playlistSaveRow.addView(savePlaylist, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams exportParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        exportParams.leftMargin = dp(8);
+        playlistSaveRow.addView(exportPlaylist, exportParams);
+        playlistCard.addView(playlistSaveRow);
+        playlistSpinner = new Spinner(this);
+        playlistAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
+                new ArrayList<String>());
+        playlistAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        playlistSpinner.setAdapter(playlistAdapter);
+        playlistCard.addView(playlistSpinner, margins(0, dp(10), 0, dp(8)));
+        LinearLayout playlistRow = new LinearLayout(this);
+        playlistRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button loadPlaylist = secondaryButton("Load queue", v -> loadPlaylist());
+        Button deletePlaylist = secondaryButton("Delete", v -> deletePlaylist());
+        playlistRow.addView(loadPlaylist, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        deleteParams.leftMargin = dp(8);
+        playlistRow.addView(deletePlaylist, deleteParams);
+        playlistCard.addView(playlistRow);
+        root.addView(playlistCard);
+
+        root.addView(sectionHeader("6 · Subscriptions"));
+        LinearLayout subscriptionCard = card();
+        TextView subscriptionHelp = label(
+                "Save the feed URL above, then download new episodes to the phone in advance.",
+                13, false);
+        subscriptionHelp.setTextColor(getColor(R.color.text_muted));
+        subscriptionCard.addView(subscriptionHelp);
+        subscriptionStatus = label("", 12, false);
+        subscriptionStatus.setTextColor(getColor(R.color.text_muted));
+        subscriptionCard.addView(subscriptionStatus, margins(0, dp(6), 0, dp(8)));
+        LinearLayout subscriptionRow = new LinearLayout(this);
+        subscriptionRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button subscribe = secondaryButton("Subscribe", v -> subscribeToFeed());
+        Button refreshSubscriptions = secondaryButton("Download new", v -> refreshSubscriptions());
+        subscriptionRow.addView(subscribe, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        refreshParams.leftMargin = dp(8);
+        subscriptionRow.addView(refreshSubscriptions, refreshParams);
+        subscriptionCard.addView(subscriptionRow, margins(0, 0, 0, dp(8)));
+        LinearLayout opmlRow = new LinearLayout(this);
+        opmlRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button importOpml = secondaryButton("Import OPML", v -> importOpml());
+        Button exportOpml = secondaryButton("Export OPML", v -> exportOpml());
+        opmlRow.addView(importOpml, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams opmlParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        opmlParams.leftMargin = dp(8);
+        opmlRow.addView(exportOpml, opmlParams);
+        subscriptionCard.addView(opmlRow);
+        root.addView(subscriptionCard);
+
+        root.addView(sectionHeader("7 · Saved plan"));
+        LinearLayout planCard = card();
+        planStatus = label("", 12, false);
+        planStatus.setTextColor(getColor(R.color.text_muted));
+        planCard.addView(planStatus);
+        LinearLayout planRow = new LinearLayout(this);
+        planRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button savePlan = secondaryButton("Save setup", v -> savePlan());
+        Button runPlan = secondaryButton("Run plan", v -> runPlan());
+        planRow.addView(savePlan, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams runParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        runParams.leftMargin = dp(8);
+        planRow.addView(runPlan, runParams);
+        planCard.addView(planRow, margins(0, dp(8), 0, 0));
+        planEnabledCheck = choice("Offer this plan when the player connects", false,
+                (button, checked) -> {
+                    SyncPlanStore.setEnabled(this, checked);
+                    refreshPlanStatus();
+                });
+        planCard.addView(planEnabledCheck, margins(0, dp(6), 0, 0));
+        root.addView(planCard);
 
         estimate = label("", 13, false);
         estimate.setTextColor(getColor(R.color.text_muted));
@@ -691,6 +806,14 @@ public final class MainActivity extends Activity implements TransferManager.List
                 takePersistable(tree, true);
                 scanSourceFolder(tree);
             }
+        } else if (requestCode == REQ_IMPORT_OPML) {
+            if (data.getData() != null) {
+                importOpmlFrom(data.getData());
+            }
+        } else if (requestCode == REQ_EXPORT_OPML) {
+            if (data.getData() != null) {
+                writeOpmlTo(data.getData());
+            }
         } else if (requestCode == REQ_DEST_TREE) {
             Uri tree = data.getData();
             if (tree != null) {
@@ -988,7 +1111,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         TransferManager.Request request = new TransferManager.Request(
                 sources, dest, state.organiseMode(), state.duplicateMode(),
                 state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(),
-                state.writePlaylists());
+                state.writePlaylists(), "", null, state.convertToMp3(), null);
         PlayerFolderStore.remember(this, dest, state.destinationLabel());
         try {
             manager.start(request);
@@ -1023,8 +1146,10 @@ public final class MainActivity extends Activity implements TransferManager.List
                         + "folder.");
             }
             useUsbButton.setEnabled(false);
+            planOffered = false;
         } else {
             maybeRestorePlayerFolder();
+            maybeOfferPlan();
             StringBuilder sb = new StringBuilder("USB storage detected: ");
             for (int i = 0; i < usbVolumes.size(); i++) {
                 if (i > 0) {
@@ -1199,6 +1324,414 @@ public final class MainActivity extends Activity implements TransferManager.List
         return message;
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Playlists, subscriptions, saved plan
+    // ---------------------------------------------------------------------------------------
+
+    private void savePlaylist() {
+        String name = playlistNameInput == null ? "" : playlistNameInput.getText().toString().trim();
+        if (name.isEmpty()) {
+            toast("Enter a playlist name first");
+            return;
+        }
+        List<SourceItem> items = state.sources();
+        if (items.isEmpty()) {
+            toast("Add some files first");
+            return;
+        }
+        PlaylistStore.save(this, name, items);
+        refreshPlaylistSpinner();
+        toast("Saved playlist " + name + " (" + items.size() + " tracks)");
+    }
+
+    private void refreshPlaylistSpinner() {
+        if (playlistAdapter == null) {
+            return;
+        }
+        List<String> names = PlaylistStore.names(this);
+        playlistAdapter.clear();
+        playlistAdapter.addAll(names);
+        playlistAdapter.notifyDataSetChanged();
+        playlistSpinner.setEnabled(!names.isEmpty());
+    }
+
+    private String selectedPlaylistName() {
+        if (playlistSpinner == null) {
+            return null;
+        }
+        Object item = playlistSpinner.getSelectedItem();
+        return item == null ? null : item.toString();
+    }
+
+    private void loadPlaylist() {
+        String name = selectedPlaylistName();
+        if (name == null) {
+            toast("No saved playlists");
+            return;
+        }
+        PlaylistStore.Playlist playlist = PlaylistStore.load(this, name);
+        if (playlist == null || playlist.items.isEmpty()) {
+            toast("That playlist is empty");
+            return;
+        }
+        state.addSources(playlist.items);
+        renderSelections();
+        toast("Loaded " + playlist.items.size() + " tracks from " + name);
+    }
+
+    private void exportPlaylist() {
+        String name = selectedPlaylistName();
+        if (name == null) {
+            toast("No saved playlists");
+            return;
+        }
+        PlaylistStore.Playlist playlist = PlaylistStore.load(this, name);
+        if (playlist == null || playlist.items.isEmpty()) {
+            toast("That playlist is empty");
+            return;
+        }
+        Uri dest = state.destinationTree();
+        if (dest == null) {
+            toast("Choose the player folder first");
+            return;
+        }
+        TransferManager.Request request = new TransferManager.Request(playlist.items, dest,
+                state.organiseMode(), state.duplicateMode(), state.verifyAfterCopy(),
+                state.duplicatesInTargetFolderOnly(), state.writePlaylists(), name, null,
+                state.convertToMp3(), null);
+        try {
+            manager.start(request);
+        } catch (RuntimeException e) {
+            toast(describe(e));
+            return;
+        }
+        TransferService.start(this);
+        sawRunning = true;
+        notifiedPhase = null;
+        render(manager.snapshot());
+        toast("Exporting playlist " + name);
+    }
+
+    private void deletePlaylist() {
+        String name = selectedPlaylistName();
+        if (name == null) {
+            toast("No saved playlists");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Delete playlist?")
+                .setMessage(name)
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    PlaylistStore.delete(this, name);
+                    refreshPlaylistSpinner();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void refreshSubscriptionStatus() {
+        if (subscriptionStatus == null) {
+            return;
+        }
+        List<SubscriptionStore.Feed> feeds = SubscriptionStore.list(this);
+        if (feeds.isEmpty()) {
+            subscriptionStatus.setText("No subscriptions yet.");
+            return;
+        }
+        StringBuilder sb = new StringBuilder(feeds.size() + (feeds.size() == 1 ? " feed: " : " feeds: "));
+        int shown = 0;
+        for (SubscriptionStore.Feed feed : feeds) {
+            if (shown >= 3) {
+                sb.append("…");
+                break;
+            }
+            if (shown > 0) {
+                sb.append(", ");
+            }
+            sb.append(feed.title);
+            shown++;
+        }
+        subscriptionStatus.setText(sb.toString());
+    }
+
+    private void subscribeToFeed() {
+        String link = feedInputUrl();
+        if (link == null) {
+            return;
+        }
+        SubscriptionStore.add(this, link, link);
+        refreshSubscriptionStatus();
+        toast("Subscribed to the feed in the URL box");
+    }
+
+    private void refreshSubscriptions() {
+        List<SubscriptionStore.Feed> feeds = SubscriptionStore.list(this);
+        if (feeds.isEmpty()) {
+            toast("Subscribe to a feed first");
+            return;
+        }
+        setBusy(true, "Checking subscriptions…");
+        ioExecutor.execute(() -> {
+            int downloaded = 0;
+            int checked = 0;
+            int failures = 0;
+            File cacheDir = new File(getCacheDir(), "episodes");
+            if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) {
+                mainHandler.post(() -> {
+                    setBusy(false, null);
+                    toast("Cannot create the episode cache folder");
+                });
+                return;
+            }
+            for (SubscriptionStore.Feed feed : feeds) {
+                try {
+                    List<FeedScanner.Episode> episodes =
+                            RemoteAudio.fetchFeedEpisodes(feed.url, RemoteAudio.MAX_FEED_CHARS);
+                    checked++;
+                    List<SourceItem> added = new ArrayList<>();
+                    List<String> seen = new ArrayList<>(feed.seen);
+                    for (FeedScanner.Episode episode : episodes) {
+                        if (downloaded >= MAX_AUTO_DOWNLOADS) {
+                            break;
+                        }
+                        if (seen.contains(episode.audioUrl)) {
+                            continue;
+                        }
+                        try {
+                            String name = FileNameSanitizer.fileName(
+                                    MediaTypes.normalizeAudioName(episode.title, episode.mimeType));
+                            File target = new File(cacheDir, (downloaded + 1) + "-" + name);
+                            RemoteAudio.downloadToFile(episode.audioUrl, target, null);
+                            added.add(new SourceItem(Uri.fromFile(target), target.getName(),
+                                    target.length(), episode.mimeType, "Podcasts",
+                                    Collections.<String>emptyList(), null));
+                            seen.add(episode.audioUrl);
+                            downloaded++;
+                        } catch (Throwable t) {
+                            failures++;
+                        }
+                    }
+                    SubscriptionStore.markChecked(this, feed.url, seen, feed.title);
+                    final List<SourceItem> toAdd = added;
+                    mainHandler.post(() -> {
+                        state.addSources(toAdd);
+                        renderSelections();
+                    });
+                } catch (Throwable t) {
+                    failures++;
+                }
+            }
+            final int checkedCount = checked;
+            final int downloadedCount = downloaded;
+            final int failureCount = failures;
+            mainHandler.post(() -> {
+                setBusy(false, null);
+                refreshSubscriptionStatus();
+                toast(checkedCount + (checkedCount == 1 ? " feed checked" : " feeds checked") + ", "
+                        + downloadedCount + (downloadedCount == 1 ? " new episode queued" : " new episodes queued")
+                        + (failureCount > 0 ? " (" + failureCount + " failed)" : ""));
+            });
+        });
+    }
+
+    private void importOpml() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                        "text/xml", "application/xml", "application/x-opml", "text/plain",
+                        "application/octet-stream"});
+        try {
+            startActivityForResult(intent, REQ_IMPORT_OPML);
+        } catch (ActivityNotFoundException e) {
+            toast("No file picker available");
+        }
+    }
+
+    private void importOpmlFrom(Uri uri) {
+        setBusy(true, "Importing subscriptions…");
+        ioExecutor.execute(() -> {
+            try {
+                String xml = readText(uri, 8 * 1024 * 1024);
+                List<Opml.Feed> feeds = Opml.parse(xml);
+                for (Opml.Feed feed : feeds) {
+                    SubscriptionStore.add(this, feed.url, feed.title);
+                }
+                final int count = feeds.size();
+                mainHandler.post(() -> {
+                    setBusy(false, null);
+                    refreshSubscriptionStatus();
+                    toast(count == 0 ? "No feeds found in that OPML file"
+                            : "Imported " + count + (count == 1 ? " feed" : " feeds"));
+                });
+            } catch (Throwable t) {
+                mainHandler.post(() -> {
+                    setBusy(false, null);
+                    toast("OPML import failed: " + describe(t));
+                });
+            }
+        });
+    }
+
+    private void exportOpml() {
+        List<SubscriptionStore.Feed> feeds = SubscriptionStore.list(this);
+        if (feeds.isEmpty()) {
+            toast("No subscriptions to export");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("text/xml")
+                .putExtra(Intent.EXTRA_TITLE, "ruizu-subscriptions.opml");
+        try {
+            startActivityForResult(intent, REQ_EXPORT_OPML);
+        } catch (ActivityNotFoundException e) {
+            toast("No file picker available");
+        }
+    }
+
+    private void writeOpmlTo(Uri uri) {
+        List<SubscriptionStore.Feed> feeds = SubscriptionStore.list(this);
+        List<Opml.Feed> entries = new ArrayList<>();
+        for (SubscriptionStore.Feed feed : feeds) {
+            entries.add(new Opml.Feed(feed.title, feed.url));
+        }
+        String text = Opml.generate(entries);
+        try (OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
+            if (out == null) {
+                throw new IOException("Cannot open the destination");
+            }
+            out.write(text.getBytes("UTF-8"));
+            toast("Exported " + entries.size() + (entries.size() == 1 ? " feed" : " feeds"));
+        } catch (Throwable t) {
+            toast("OPML export failed: " + describe(t));
+        }
+    }
+
+    private void savePlan() {
+        Uri dest = state.destinationTree();
+        if (dest == null) {
+            toast("Choose the player folder first");
+            return;
+        }
+        List<Uri> trees = state.sourceTrees();
+        if (trees.isEmpty()) {
+            toast("Add a source folder first (Add folder)");
+            return;
+        }
+        Uri sourceTree = trees.get(0);
+        SyncPlanStore.Plan plan = new SyncPlanStore.Plan(sourceTree.toString(), "",
+                dest.toString(), state.destinationLabel(), Collections.<String>emptyList(),
+                state.organiseMode(), state.duplicateMode(), state.verifyAfterCopy(),
+                state.duplicatesInTargetFolderOnly(), state.writePlaylists(), false, "",
+                planEnabledCheck != null && planEnabledCheck.isChecked());
+        SyncPlanStore.save(this, plan);
+        refreshPlanStatus();
+        toast("Saved transfer plan");
+    }
+
+    private void runPlan() {
+        SyncPlanStore.Plan plan = SyncPlanStore.load(this);
+        if (plan == null) {
+            toast("No saved plan yet");
+            return;
+        }
+        if (plan.destTree.isEmpty()) {
+            toast("The saved plan has no player folder");
+            return;
+        }
+        setBusy(true, "Running the saved plan…");
+        ioExecutor.execute(() -> {
+            try {
+                List<SourceItem> items = new ArrayList<>();
+                if (!plan.sourceTree.isEmpty()) {
+                    SourceRepo.Listing listing = new SourceRepo(this).scanTree(Uri.parse(plan.sourceTree));
+                    items.addAll(listing.items);
+                }
+                mainHandler.post(() -> {
+                    setBusy(false, null);
+                    if (items.isEmpty()) {
+                        toast("The saved source folder has no supported audio");
+                        return;
+                    }
+                    state.addSources(items);
+                    Uri dest = Uri.parse(plan.destTree);
+                    state.setDestination(dest, plan.destLabel);
+                    state.setOrganiseMode(plan.organise);
+                    state.setDuplicateMode(plan.duplicates);
+                    state.setVerifyAfterCopy(plan.verify);
+                    state.setDuplicatesInTargetFolderOnly(plan.scopeFolder);
+                    state.setWritePlaylists(plan.playlists);
+                    syncOptionViews();
+                    renderSelections();
+                    beginTransfer(items, dest);
+                });
+            } catch (Throwable t) {
+                mainHandler.post(() -> {
+                    setBusy(false, null);
+                    toast("Saved plan failed: " + describe(t));
+                });
+            }
+        });
+    }
+
+    private void refreshPlanStatus() {
+        if (planStatus == null) {
+            return;
+        }
+        SyncPlanStore.Plan plan = SyncPlanStore.load(this);
+        if (plan == null) {
+            planStatus.setText("No saved plan. Add a source folder, pick the player folder, then Save setup.");
+            if (planEnabledCheck != null) {
+                planEnabledCheck.setChecked(false);
+            }
+            return;
+        }
+        String destination = plan.destLabel.isEmpty() ? "player folder" : plan.destLabel;
+        planStatus.setText("Plan: source folder → " + destination + " (" + plan.organise.label
+                + ", " + plan.duplicates.label + ")");
+        if (planEnabledCheck != null) {
+            planEnabledCheck.setChecked(plan.enabled);
+        }
+    }
+
+    private void maybeOfferPlan() {
+        if (planOffered) {
+            return;
+        }
+        SyncPlanStore.Plan plan = SyncPlanStore.load(this);
+        if (plan == null || !plan.enabled || manager.isRunning()) {
+            return;
+        }
+        planOffered = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Player connected")
+                .setMessage("Run the saved transfer plan now?")
+                .setPositiveButton("Run plan", (dialog, which) -> runPlan())
+                .setNegativeButton("Not now", null)
+                .show();
+    }
+
+    private String readText(Uri uri, int maxChars) throws IOException {
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) {
+                throw new IOException("Cannot open the file");
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[16 * 1024];
+            int total = 0;
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                total += read;
+                if (total > maxChars) {
+                    throw new IOException("The file is too large");
+                }
+                out.write(buffer, 0, read);
+            }
+            return out.toString("UTF-8");
+        }
+    }
+
     private void syncOptionViews() {
         organiseSpinner.setSelection(state.organiseMode().ordinal());
         duplicateSpinner.setSelection(state.duplicateMode().ordinal());
@@ -1206,6 +1739,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             verifyCheck.setChecked(state.verifyAfterCopy());
             scopeCheck.setChecked(state.duplicatesInTargetFolderOnly());
             playlistCheck.setChecked(state.writePlaylists());
+            convertCheck.setChecked(state.convertToMp3());
         }
     }
 
@@ -1225,17 +1759,40 @@ public final class MainActivity extends Activity implements TransferManager.List
         if (lastRunText == null) {
             return;
         }
-        String summary = HistoryStore.lastRunSummary(this);
-        long at = HistoryStore.lastRunAt(this);
-        if (summary.isEmpty()) {
+        java.util.List<HistoryStore.Run> runs = HistoryStore.recentRuns(this, 3);
+        if (runs.isEmpty()) {
             lastRunText.setText("No transfers yet");
             return;
         }
-        String when = at > 0
-                ? android.text.format.DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(),
-                        android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
-                : "";
-        lastRunText.setText("Last run" + (when.isEmpty() ? "" : " (" + when + ")") + ": " + summary);
+        StringBuilder sb = new StringBuilder();
+        for (HistoryStore.Run run : runs) {
+            String when = android.text.format.DateUtils.getRelativeTimeSpanString(run.at,
+                    System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS).toString();
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append("• ").append(run.summary).append(" — ").append(when);
+        }
+        lastRunText.setText(sb.toString());
+    }
+
+    /** Diagnostics hook for CI: `adb shell am start ... --es selftest convert`. */
+    private void maybeRunSelfTest(Intent intent) {
+        if (intent == null) {
+            return;
+        }
+        String mode = intent.getStringExtra("selftest");
+        if (mode == null) {
+            return;
+        }
+        if ("convert".equals(mode)) {
+            ioExecutor.execute(() -> {
+                String result = ConversionSelfTest.run(this);
+                String line = "conversion selftest: " + result;
+                android.util.Log.i("RUIZU-SELFTEST", line);
+                mainHandler.post(() -> toast(line));
+            });
+        }
     }
 
     private void retryFailed() {
@@ -1251,7 +1808,8 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
         TransferManager.Request request = new TransferManager.Request(
                 new ArrayList<>(failed), dest, state.organiseMode(), state.duplicateMode(),
-                state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(), state.writePlaylists());
+                state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(), state.writePlaylists(),
+                "", null, state.convertToMp3(), null);
         try {
             manager.start(request);
         } catch (RuntimeException e) {

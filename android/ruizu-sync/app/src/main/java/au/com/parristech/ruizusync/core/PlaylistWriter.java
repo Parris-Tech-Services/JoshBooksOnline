@@ -38,6 +38,27 @@ public final class PlaylistWriter {
         return sb.toString();
     }
 
+    /**
+     * Builds a playlist from paths relative to the playlist file's folder, e.g.
+     * "Rock/Album/01.mp3", so a playlist in the player root can reference the whole tree.
+     */
+    public static String buildM3uFromPaths(List<String> relativePaths) {
+        StringBuilder sb = new StringBuilder("#EXTM3U\n");
+        if (relativePaths == null) {
+            return sb.toString();
+        }
+        for (String path : relativePaths) {
+            if (path == null || path.isEmpty()) {
+                continue;
+            }
+            int slash = path.lastIndexOf('/');
+            String fileName = slash >= 0 ? path.substring(slash + 1) : path;
+            sb.append("#EXTINF:-1,").append(displayName(fileName)).append('\n');
+            sb.append(path).append('\n');
+        }
+        return sb.toString();
+    }
+
     /** Title shown by the player: the file name without its extension. */
     public static String displayName(String fileName) {
         int dot = fileName.lastIndexOf('.');
