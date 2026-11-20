@@ -219,6 +219,11 @@ public final class RemoteAudio {
                 }
 
                 if (!append) {
+                    // Discard an old partial before changing its identity. If the process dies
+                    // while opening the new stream, stale bytes must never inherit new metadata.
+                    if (part.exists() && !part.delete()) {
+                        throw new IOException("Cannot discard stale partial episode");
+                    }
                     // Persist identity before the first byte so a process death cannot create an
                     // unlabelled .part that gets appended to another episode on the next run.
                     DownloadResumePolicy.State latest = DownloadResumePolicy.fromHeaders(
