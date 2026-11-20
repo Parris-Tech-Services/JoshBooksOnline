@@ -66,6 +66,12 @@ jobs:
         with:
           packages: 'platform-tools'
 
+      - name: Emulator host check
+        run: |
+          echo "kvm: $(ls -l /dev/kvm 2>&1 || echo missing)"
+          grep -c -E '(vmx|svm)' /proc/cpuinfo || true
+          free -m || true
+
       - uses: actions/download-artifact@v4
         with:
           name: ruizu-sync-debug-apk
@@ -75,19 +81,23 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
-          target: google_apis
+          target: default
           arch: x86_64
+          profile: pixel_2
           disable-animations: true
-          emulator-boot-timeout: 900
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: |
             set -e
             adb install -r apk/app-debug.apk
+            adb shell pm grant au.com.parristech.ruizusync android.permission.POST_NOTIFICATIONS || true
             adb shell am start -W -n au.com.parristech.ruizusync/.ui.MainActivity
-            sleep 6
+            sleep 8
             echo "== process =="
             adb shell pidof au.com.parristech.ruizusync
-            echo "== resumed activity =="
-            adb shell dumpsys activity activities | grep -m1 -i "ResumedActivity.*ruizusync"
+            echo "== top activity =="
+            adb shell dumpsys activity top | grep -m1 "ACTIVITY"
+            adb shell dumpsys activity top | grep -q "au.com.parristech.ruizusync/.ui.MainActivity"
             echo "== ui dump =="
             adb shell uiautomator dump /sdcard/window.xml || true
             adb pull /sdcard/window.xml window.xml || true
