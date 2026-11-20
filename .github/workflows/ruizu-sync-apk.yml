@@ -35,7 +35,7 @@ jobs:
       # One Gradle invocation: tests and APK share the same compilation, which is faster
       # than two separate builds and still fails the gate when a test fails.
       - name: Unit tests and debug APK
-        run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug
+        run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease
 
       - name: Static APK verification
         run: |
@@ -51,6 +51,21 @@ jobs:
         with:
           name: ruizu-sync-debug-apk
           path: android/ruizu-sync/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Check unsigned stable release APK before external signing
+        run: |
+          set -euo pipefail
+          APK="android/ruizu-sync/app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$APK"
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Android/Sdk}}"
+          "$SDK/build-tools/35.0.0/aapt2" dump badging "$APK" | grep -F "name='au.com.parristech.ruizusync.stable'"
+
+      - name: Upload unsigned stable release for dedicated signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-sync-stable-release-unsigned
+          path: android/ruizu-sync/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
 
   emulator:
