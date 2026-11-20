@@ -13,24 +13,100 @@ permissions:
 
 jobs:
   build:
+    name: JVM tests, APK build and static verification
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Unit tests and debug APK
-        run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest :app:assembleDebug
-      - uses: actions/upload-artifact@v4
+
+      - name: Unit tests (core logic, transfer pipeline, feed scanner, utils)
+        run: gradle --no-daemon -p android/ruizu-sync :app:testDebugUnitTest
+
+      - name: Build debug APK
+        run: gradle --no-daemon -p android/ruizu-sync :app:assembleDebug
+
+      - name: Static APK verification
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_SDK_ROOT/build-tools/35.0.0:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          cd android/ruizu-sync
+          ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: ruizu-sync-debug-apk
           path: android/ruizu-sync/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  emulator:
+    name: Emulator smoke test (API 34)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ruizu-sync-debug-apk
+          path: apk
+
+      - name: Install and launch on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: |
+            set -e
+            adb install -r apk/app-debug.apk
+            adb shell am start -W -n au.com.parristech.ruizusync/.ui.MainActivity
+            sleep 6
+            echo "== process =="
+            adb shell pidof au.com.parristech.ruizusync
+            echo "== resumed activity =="
+            adb shell dumpsys activity activities | grep -m1 -i "ResumedActivity.*ruizusync"
+            echo "== ui dump =="
+            adb shell uiautomator dump /sdcard/window.xml || true
+            adb pull /sdcard/window.xml window.xml || true
+            if [ -f window.xml ]; then
+              grep -o 'text="RUIZU Sync"' window.xml | head -1
+              grep -o 'text="Choose player folder"' window.xml | head -1
+              grep -o 'text="Start transfer"' window.xml | head -1
+            fi
+            adb exec-out screencap -p > emulator-launch.png
+            echo "== crash check =="
+            if adb logcat -d -b crash | grep -q "au.com.parristech.ruizusync"; then
+              echo "crash buffer mentions the app"; adb logcat -d -b crash; exit 1
+            fi
+            echo "emulator launch OK"
+
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-sync-emulator-evidence
+          path: |
+            emulator-launch.png
+            window.xml
+          if-no-files-found: warn
