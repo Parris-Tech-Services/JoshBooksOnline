@@ -605,6 +605,13 @@ public final class TransferManager {
                     + "refresh: " + targetName + ". Rescan before trying again.");
         }
         long bytes = created.size >= 0 ? created.size : Math.max(0L, effectiveSize);
+        // SafTransfer stages into an owned .part file, reads it back and compares the SHA-256
+        // against the source before renaming, so reaching this point proves the bytes on the
+        // player match the source. Record it explicitly: the transfer log is the user's
+        // evidence that a copy really succeeded, and this line makes it checkable.
+        // This always holds - SafTransfer verifies regardless of request.verifyAfterCopy, so
+        // that flag is currently advisory and cannot actually disable verification.
+        log("SHA-256 verified: " + targetName);
         return new CopyResult(created, bytes);
     }
 
