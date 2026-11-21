@@ -1,0 +1,31 @@
+name: RUIZU Drive Comparator
+
+on:
+  pull_request:
+    paths:
+      - 'tools/ruizu-drive-compare/**'
+      - '.github/workflows/ruizu-drive-compare.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/ruizu-drive-compare/**'
+      - '.github/workflows/ruizu-drive-compare.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    name: Read-only comparator unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python syntax
+        run: python -m py_compile tools/ruizu-drive-compare/compare.py tools/ruizu-drive-compare/test_compare.py
+      - name: Run unit tests (no personal Drive data)
+        working-directory: tools/ruizu-drive-compare
+        run: python -m unittest discover -s . -p 'test_*.py' -v
