@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en-AU"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'">
+<title>RUIZU | Private library comparison</title>
+<style>
+:root{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color-scheme:light dark;--bg:#f4f6f9;--card:#fff;--ink:#172234;--muted:#637087;--border:#dce1ea;--accent:#315b92;--chip:#e8eff8}
+@media(prefers-color-scheme:dark){:root{--bg:#121821;--card:#1c2532;--ink:#e9edf3;--muted:#acb8ca;--border:#3c4a5e;--accent:#9ebef5;--chip:#314359}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);line-height:1.46}.shell{max-width:1140px;margin:auto;padding:18px 16px 60px}h1{font-size:clamp(1.65rem,4vw,2.3rem);letter-spacing:-.04em;margin:.1em 0}h2{font-size:1.14rem;margin:0 0 10px}p{margin:.3rem 0 1rem}.muted{color:var(--muted)}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-weight:700;font-size:.73rem;color:var(--accent)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.card{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:16px;margin-bottom:14px}.step{font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase}input[type=file],input[type=search],select{width:100%;padding:11px;border:1px solid var(--border);background:var(--card);color:var(--ink);border-radius:9px;margin-top:8px;font:inherit}button{border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--ink);padding:10px 15px;cursor:pointer;font:inherit}button.primary{background:#2a5d9c;color:#fff;border-color:#2a5d9c}button:disabled{opacity:.5;cursor:not-allowed}.help{font-size:.84rem;color:var(--muted);margin-top:8px}#alert{padding:12px;margin:12px 0;border-radius:9px;border:1px solid var(--border);display:none}#alert.show{display:block}.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.stat{padding:12px;border:1px solid var(--border);border-radius:9px}.stat strong{font-size:1.5rem;display:block}.stat span{font-size:.8rem;color:var(--muted)}.controls{display:flex;flex-wrap:wrap;gap:9px;align-items:center}.controls>*{flex:1 1 180px}.controls button{flex:0 0 auto}label.check{display:flex;gap:10px;align-items:flex-start;font-size:.9rem;margin-top:10px;cursor:pointer}label.check input{margin-top:4px}.table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px}table{width:100%;border-collapse:collapse;font-size:.88rem}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}th{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.02em}td.path{max-width:340px;overflow-wrap:anywhere}.pill{background:var(--chip);border-radius:6px;display:inline-block;padding:3px 6px;font-size:.73rem;font-weight:700}#results{display:none}#shown{font-size:.84rem;color:var(--muted);margin:8px 0}.foot{font-size:.82rem;color:var(--muted)}.privacy{display:inline-flex;gap:6px;align-items:center;font-weight:700;font-size:.84rem}.privacy::before{content:'●';color:#318d65}a{color:var(--accent)}@media(max-width:640px){.grid{grid-template-columns:1fr}.shell{padding:13px 10px 30px}th,td{padding:8px}.card{padding:13px}}
+</style></head><body><main class="shell">
+<div class="eyebrow">RUIZU Sync · offline companion</div><h1>Compare your audio libraries</h1>
+<p class="muted">See what likely exists on the RUIZU and what needs reviewing. Filenames and player inventories stay on this device; no network requests, transfers or deletions.</p>
+<div class="card"><span class="privacy">Private · works offline · read-only</span><p class="help">Filename and size matches are only <strong>likely</strong>. No file is deleted or copied. A "not found" result is only meaningful after confirming the player inventory covers the correct drive.</p></div>
+<div class="grid">
+<section class="card"><span class="step">1 · Source</span><h2>Google Drive audio list</h2><input type="file" id="driveFile" accept=".csv,.json" aria-label="Choose Google Drive audio CSV or JSON"><p id="driveInfo" class="help">Choose the exported Drive manifest CSV or JSON.</p></section>
+<section class="card"><span class="step">2 · Player</span><h2>RUIZU file inventory</h2><input type="file" id="playerFile" accept=".csv,.json" aria-label="Choose player inventory CSV or JSON"><p id="playerInfo" class="help">Use an exported file list, e.g. <code>player-inventory.json</code>, with relative paths and sizes. No USB control is needed.</p></section>
+</div>
+<section class="card">
+<label class="check"><input type="checkbox" id="complete"><span><strong>I have checked that the RUIZU inventory is complete.</strong> The scan covers the intended player storage, including all audio folders. Without this, unmatched tracks stay <em>unconfirmed</em>.</span></label>
+<div class="controls" style="margin-top:13px"><button class="primary" id="compareBtn" disabled>Compare libraries</button><button id="clearBtn">Clear loaded data</button></div>
+<div role="alert" id="alert"></div></section>
+<section id="results"><section class="card"><h2>Comparison results</h2><div id="stats" class="stats"></div><p id="note" class="help"></p></section>
+<section class="card"><div class="controls"><input type="search" id="search" placeholder="Search audio titles or folders" aria-label="Search results"><select id="status" aria-label="Filter comparison status"><option value="">All results</option><option>VERIFIED_PRESENT</option><option>LIKELY_PRESENT</option><option>POSSIBLE_MATCH</option><option>NOT_FOUND_IN_SCAN</option><option>UNCONFIRMED</option><option>SOURCE_EMPTY</option></select><select id="category" aria-label="Filter source category"><option value="">All source categories</option></select><button id="exportBtn">Export reviewed results CSV</button></div><p id="shown"></p>
+<div class="table-wrap"><table><thead><tr><th>Status</th><th>Source file</th><th>Size</th><th>Player candidate / reason</th></tr></thead><tbody id="tableBody"></tbody></table></div><p class="help">Showing up to 400 matching rows at once for phone performance. The CSV export includes all results matching your filters.</p></section></section>
+<p class="foot">Designed as a companion to RUIZU Sync. Uses local JavaScript only, no trackers, third-party libraries, uploads, or access to your Google account. v1 · source/player comparison, not playback or device transfer.</p>
+</main>
+<script>
+'use strict';
+(function(){
+const MAX_FILE=12*1024*1024,MAX_ROWS=40000;
+let sources=null,player=null,results=[];
+const $=id=>document.getElementById(id);
+const show=(message,isError=false)=>{const el=$('alert');el.textContent=message;el.className='show';el.style.color=isError?'#c34949':''};
+const norm=s=>String(s??'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ');
+const basename=s=>String(s??'').replace(/\\/g,'/').split('/').pop();
+const stem=s=>basename(s).replace(/\.[^.]+$/,'');
+const key=s=>norm(stem(s));
+const filesize=x=>{if(x==null||x==='')return null; if(typeof x==='boolean'||!/^\d+$/.test(String(x)))throw Error('Invalid file size: '+String(x).slice(0,20));let n=Number(x);if(!Number.isSafeInteger(n))throw Error('Unreasonable file size');return n;};
+const hash=x=>/^[a-f0-9]{64}$/.test(String(x||'').toLowerCase())?String(x).toLowerCase():'';
+const pick=(obj,fields)=>{for(const f of fields)if(Object.prototype.hasOwnProperty.call(obj,f)&&obj[f]!==''&&obj[f]!=null)return obj[f];return '';};
+function parseCsv(str){
+ const rows=[];let row=[],field='',quoted=false,afterQuote=false;
+ for(let i=0;i<str.length;i++){
+  const c=str[i];if(quoted){if(c==='"'&&str[i+1]==='"'){field+='"';i++}else if(c==='"'){quoted=false;afterQuote=true}else field+=c;continue;}
+  if(afterQuote){if(c===','){row.push(field);field='';afterQuote=false;continue}if(c==='\n'||c==='\r'){row.push(field);rows.push(row);row=[];field='';afterQuote=false;if(c==='\r'&&str[i+1]==='\n')i++;continue}if(c===' '||c==='\t')continue;throw Error('Invalid CSV quoting near record '+(rows.length+1));}
+  if(c==='"'){if(field!=='')throw Error('Invalid CSV opening quote');quoted=true;continue}
+  if(c===','){row.push(field);field='';continue}
+  if(c==='\n'||c==='\r'){row.push(field);rows.push(row);row=[];field='';if(c==='\r'&&str[i+1]==='\n')i++;continue}field+=c;
+ }
+ if(quoted)throw Error('CSV ends inside a quoted field');
+ if(row.length||field.length||afterQuote){row.push(field);rows.push(row)}
+ if(!rows.length)throw Error('CSV has no rows');
+ let heads=rows.shift().map((h,i)=>i===0?h.replace(/^\uFEFF/,''):h);
+ if(heads.some(h=>!h))throw Error('CSV has an empty column heading');
+ if(rows.length>MAX_ROWS)throw Error('Too many rows in CSV');
+ return rows.filter(r=>r.some(x=>x!=='')).map((r,i)=>{if(r.length!==heads.length)throw Error('CSV row '+(i+2)+' has '+r.length+' columns; expected '+heads.length);const o={};heads.forEach((h,k)=>{o[h]=r[k]});return o});
+}
+function parseInput(text,ext){
+ const raw=ext==='json'?JSON.parse(text):parseCsv(text);
+ const rows=Array.isArray(raw)?raw:raw&&Array.isArray(raw.files)?raw.files:null;
+ if(!rows||rows.length>MAX_ROWS)throw Error('Expected a JSON files array or CSV table (maximum 40,000 rows)');
+ return rows;
+}
+function sourceData(rows){const ids=new Set();return rows.map((r,i)=>{if(!r||typeof r!=='object')throw Error('Bad source record '+(i+1));const id=pick(r,['drive_file_id','id']),name=pick(r,['file_name','name']);if(!id||!name||ids.has(String(id)))throw Error('Missing or duplicate Drive ID/name at source record '+(i+1));ids.add(String(id));return{id:String(id),name:String(name),path:String(pick(r,['relative_path','path'])||name),size:filesize(pick(r,['size_bytes','size'])),category:String(pick(r,['category','source_root'])||'Other'),sha:hash(pick(r,['content_sha256','sha256']))}})}
+function playerData(rows){return rows.map((r,i)=>{if(!r||typeof r!=='object')throw Error('Bad player record '+(i+1));let p=pick(r,['relative_path','path','file_name','name']);if(typeof p!=='string'||!p)throw Error('Missing player path at record '+(i+1));return{name:basename(p),path:p,size:filesize(pick(r,['size_bytes','size'])),sha:hash(pick(r,['sha256','content_sha256']))}})}
+function compare(src,dst,complete){
+ const byName=new Map(),byHash=new Map();for(const p of dst){const k=key(p.name);if(k){if(!byName.has(k))byName.set(k,[]);byName.get(k).push(p)}if(p.sha){if(!byHash.has(p.sha))byHash.set(p.sha,[]);byHash.get(p.sha).push(p)}}
+ return src.map(s=>{
+ let status,why,matched=[];const direct=byName.get(key(s.name))||[];const digest=s.sha?(byHash.get(s.sha)||[]):[];
+ const hashCandidates=digest.filter(p=>s.size===null||p.size===null||s.size===p.size);
+ if(s.size===0){status='SOURCE_EMPTY';why='Empty source file, not playable'}
+ else if(hashCandidates.length){status='VERIFIED_PRESENT';why='Same independently supplied full-file SHA-256, known sizes agree';matched=hashCandidates}
+ else if(digest.length){status='POSSIBLE_MATCH';why='SHA-256 agrees but byte sizes contradict';matched=digest}
+ else {
+ const sizeMatch=direct.filter(p=>s.size!==null&&p.size===s.size);
+ const compatible=sizeMatch.filter(p=>!(s.sha&&p.sha&&s.sha!==p.sha));
+ if(compatible.length){status='LIKELY_PRESENT';why='Same normalised title and byte count, not proven identical';matched=compatible}
+ else if(direct.length){status='POSSIBLE_MATCH';why='Same normalised filename but size differs, is unknown, or hashes contradict';matched=direct}
+ else {status=complete?'NOT_FOUND_IN_SCAN':'UNCONFIRMED';why=complete?'No matching filename in the confirmed player inventory; renamed tracks may exist':'No match in the supplied inventory; completeness not confirmed'}
+ }
+ return{...s,status,why,matched:matched.map(p=>p.path)}
+ });
+}
+function escapeCsv(s){const val=String(s??'');const safe=/^[\s]*[=+\-@]/.test(val)?"'"+val:val;return '"'+safe.replace(/"/g,'""')+'"'}
+const statuses=['VERIFIED_PRESENT','LIKELY_PRESENT','POSSIBLE_MATCH','NOT_FOUND_IN_SCAN','UNCONFIRMED','SOURCE_EMPTY'];
+const counters=rows=>{let counts=Object.fromEntries(statuses.map(s=>[s,0]));for(const r of rows)counts[r.status]++;return counts;};
+function updateBtn(){$('compareBtn').disabled=!sources||!player}
+async function loadFile(type,file){if(!file)return;try{if(file.size>MAX_FILE)throw Error('Files larger than 12 MB are not supported');const ext=file.name.toLowerCase().endsWith('.json')?'json':file.name.toLowerCase().endsWith('.csv')?'csv':'';if(!ext)throw Error('Choose a JSON or CSV file');const rows=parseInput(await file.text(),ext);const data=type==='source'?sourceData(rows):playerData(rows);if(type==='source'){sources=data;$('driveInfo').textContent=data.length+' source records loaded from '+file.name}else{player=data;$('playerInfo').textContent=data.length+' player records loaded from '+file.name}
+$('results').style.display='none';updateBtn();show('File loaded locally; nothing was uploaded.');}catch(err){if(type==='source'){sources=null;$('driveInfo').textContent='Source import failed'}else{player=null;$('playerInfo').textContent='Player import failed'}updateBtn();show(String(err.message||err),true)}}
+function filtered(){const q=norm($('search').value),s=$('status').value,c=$('category').value;return results.filter(r=>(!s||r.status===s)&&(!c||r.category===c)&&(!q||norm(r.name+' '+r.path+' '+r.category).includes(q)))}
+function render(){let list=filtered(),body=$('tableBody');body.replaceChildren();for(const r of list.slice(0,400)){let tr=document.createElement('tr');for(const value of [r.status,r.path,r.size===null?'Unknown':(r.size/1048576).toFixed(1)+' MiB',r.matched.length?r.matched.slice(0,3).join(' · '):r.why]){let td=document.createElement('td');td.textContent=value;if(value===r.status)td.className='pill';else if(value===r.path)td.className='path';tr.append(td)}body.append(tr)}$('shown').textContent='Showing '+Math.min(list.length,400)+' of '+list.length+' filtered records ('+results.length+' source files total)'}
+function run(){if(!sources||!player)return;const complete=$('complete').checked&&player.length>0;results=compare(sources,player,complete);const counts=counters(results),node=$('stats');node.replaceChildren();for(const [k,n] of Object.entries(counts)){let card=document.createElement('div');card.className='stat';let b=document.createElement('strong');b.textContent=n;let label=document.createElement('span');label.textContent=k.replaceAll('_',' ');card.append(b,label);node.append(card)}$('note').textContent=complete?'Player inventory marked complete by you. NOT_FOUND_IN_SCAN still does not rule out renamed/converted audio.':'Inventory not confirmed complete. Unmatched records are deliberately UNCONFIRMED, never labelled missing.';const groups=[...new Set(sources.map(s=>s.category))].sort();$('category').replaceChildren(new Option('All source categories',''),...groups.map(g=>new Option(g,g)));$('results').style.display='block';render();show('Comparison finished locally. No audio was changed.');}
+function exportResults(){if(!results.length)return;const head=['drive_file_id','source_relative_path','file_name','size_bytes','category','status','reason','player_candidate_paths'],rows=[head,...filtered().map(r=>[r.id,r.path,r.name,r.size??'',r.category,r.status,r.why,r.matched.join('; ')])];const content='\uFEFF'+rows.map(r=>r.map(escapeCsv).join(',')).join('\r\n');const blob=new Blob([content],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='ruizu-library-comparison-results.csv';document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);}
+$('driveFile').addEventListener('change',e=>loadFile('source',e.target.files[0]));$('playerFile').addEventListener('change',e=>loadFile('player',e.target.files[0]));$('compareBtn').addEventListener('click',run);$('clearBtn').addEventListener('click',()=>{sources=null;player=null;results=[];$('driveFile').value='';$('playerFile').value='';$('driveInfo').textContent='Choose the exported Drive manifest CSV or JSON.';$('playerInfo').textContent='Choose an exported RUIZU inventory.';$('results').style.display='none';updateBtn();show('Cleared loaded file metadata.')});for(const id of ['search','status','category'])$(id).addEventListener(id==='search'?'input':'change',render);$('exportBtn').addEventListener('click',exportResults);
+// An optional private build replaces this marker with a literal manifest JSON string.
+const PRELOADED_DRIVE = null;
+if(PRELOADED_DRIVE){try{sources=sourceData(PRELOADED_DRIVE.files);$('driveInfo').textContent=sources.length+' private Drive files already loaded in this offline copy.';updateBtn();}catch(e){show('Embedded catalogue could not be loaded: '+e.message,true)}}
+// Test-only bridge; functions contain no storage or network access.
+if(location.search.includes('ruizu-test=1') || location.href === 'about:blank')window.RuizuCompareTest={norm,parseCsv,sourceData,playerData,compare,counters,escapeCsv};
+})();
+</script></body></html>

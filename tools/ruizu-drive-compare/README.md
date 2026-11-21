@@ -51,3 +51,17 @@ python3 -m unittest discover -s . -p 'test_*.py' -v
 ```
 
 Use with DSH's RUIZU Sync Android work **without changing** the Android package, transfer engine, signing or instrumentation suite.
+
+## Private offline review screen
+
+Open `offline_review.html` locally in Chrome or another modern browser (no server or login needed). The standalone screen imports the existing private Drive catalogue and a separately exported player CSV/JSON, then shows `VERIFIED_PRESENT`, `LIKELY_PRESENT`, `POSSIBLE_MATCH`, `NOT_FOUND_IN_SCAN`, `UNCONFIRMED` or `SOURCE_EMPTY` with reasons. It offers text search, category/status filtering and safe CSV export. It does **not** copy, delete, or control files on the RUIZU.
+
+Because the source catalogue is personal, the repository contains **no preloaded Drive data**. Import the CSV or JSON from your private Google Drive `RUIZU Sync Catalogues` folder. The player inventory import accepts `relative_path` or `path` plus `size_bytes` or `size`; pasted screen text is not a complete size-bearing inventory. The app never contacts a server. Import is bounded to 12 MB per file / 40,000 rows. An unconfirmed scan never produces `NOT_FOUND_IN_SCAN`.
+
+### Browser regression tests
+
+```bash
+node --test tools/ruizu-drive-compare/test_offline_review.mjs
+```
+
+Only synthetic audio records are used in tests, and no personal audio or Drive links belong in this public repository. The HTML's Content Security Policy blocks external network requests.
