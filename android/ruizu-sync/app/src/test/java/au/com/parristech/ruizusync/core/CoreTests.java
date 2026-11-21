@@ -589,6 +589,14 @@ public final class CoreTests {
                 DuplicateMode.fromStoredName("OVERWRITE", DuplicateMode.SKIP_FAST));
         checkEquals("unknown stored name falls back", DuplicateMode.SKIP_FAST,
                 DuplicateMode.fromStoredName("WHATEVER", DuplicateMode.SKIP_FAST));
+        // The UI selects by adapter position, so selectable() order and contents are a contract.
+        checkEquals("selectable order 0", DuplicateMode.SKIP_FAST, DuplicateMode.selectable().get(0));
+        checkEquals("selectable order 1", DuplicateMode.SKIP_EXACT, DuplicateMode.selectable().get(1));
+        checkEquals("selectable order 2", DuplicateMode.KEEP_BOTH, DuplicateMode.selectable().get(2));
+        checkEquals("keep both adapter index", 2, DuplicateMode.selectable().indexOf(DuplicateMode.KEEP_BOTH));
+        checkEquals("skip exact adapter index", 1, DuplicateMode.selectable().indexOf(DuplicateMode.SKIP_EXACT));
+        check("safe is idempotent", DuplicateMode.safe(DuplicateMode.safe(DuplicateMode.OVERWRITE))
+                == DuplicateMode.SKIP_EXACT);
     }
 
     // ---- tiny assertion helpers -----------------------------------------------------------

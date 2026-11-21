@@ -51,7 +51,6 @@ public final class PendingTransferStore {
             root.put("dest", request.destTree.toString());
             root.put("organise", request.organiseMode.name());
             root.put("duplicates", request.duplicateMode.name());
-            root.put("verify", request.verifyAfterCopy);
             root.put("scopeFolder", request.duplicatesInTargetFolderOnly);
             root.put("playlists", request.writePlaylists);
             root.put("convert", request.convertToMp3);
@@ -125,7 +124,6 @@ public final class PendingTransferStore {
                     DuplicateMode.SKIP_EXACT);
             TransferManager.Request request = new TransferManager.Request(
                     sources, dest, organise, duplicates,
-                    root.optBoolean("verify", true),
                     root.optBoolean("scopeFolder", false),
                     root.optBoolean("playlists", false),
                     "", null, root.optBoolean("convert", false), null);
