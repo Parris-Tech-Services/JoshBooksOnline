@@ -209,11 +209,16 @@ def main():
     out.mkdir(exist_ok=True)
     work=root/'.working';work.mkdir(exist_ok=True)
     records=[]
-    # Slots 21/22 are backups if earlier slots failed; output always capped at 20.
-    for i,(cat,opts) in enumerate(SHOWS,1):
-        if len(records)>=MAX_EPISODES:break
-        rec=choose_slot(i,cat,opts,work,out)
-        if rec:records.append(rec)
+    # Run independent feeds concurrently to avoid waiting sequentially on slow hosts.
+    # Slots 21/22 are backups if a publisher feed is inaccessible.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        jobs=[(i,pool.submit(choose_slot,i,cat,opts,work,out)) for i,(cat,opts) in enumerate(SHOWS,1)]
+        for i,fut in jobs:
+            try:
+                rec=fut.result()
+                if rec:records.append(rec)
+            except Exception as e: print(f'UNEXPECTED SLOT FAILURE {i}: {e}',flush=True)
+    records=records[:MAX_EPISODES]
     # Stable 01..20 numbers regardless of skipped slots.
     for n,rec in enumerate(records,1):
         old=out/rec['filename']
