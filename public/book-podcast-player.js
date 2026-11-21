@@ -27,6 +27,8 @@
     { id: '2hJ8bVhwhxLURYWWwXScW2', audio: "https://pdst.fm/e/traffic.megaphone.fm/GLT2044830890.mp3?updated=1749249087", title: 'Summer books 2025', show: 'Backlisted', tags: ['recommendations', 'summer reading'] }
   ];
 
+  const topics = [...new Set(episodes.flatMap((episode) => episode.tags))].sort();
+
   const STORAGE_KEY = 'joshbooks-independent-podcast-v1';
   const AUDIO_CACHE = 'joshbooks-podcast-audio-v1';
   const VISIBILITY_KEY = 'joshbooks-podcast-button-hidden-v1';
@@ -42,12 +44,15 @@
       this.recent = [];
       this.hiddenByUser = false;
       this.offlineState = 'streaming';
+      this.topic = '';
+      this.recommendationNote = '';
 
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
         if (Number.isInteger(saved.currentIndex) && saved.currentIndex >= 0 && saved.currentIndex < episodes.length) {
           this.currentIndex = saved.currentIndex;
         }
+        if (typeof saved.topic === 'string' && topics.includes(saved.topic)) this.topic = saved.topic;
         if (Array.isArray(saved.recent)) {
           this.recent = saved.recent.filter((n) => Number.isInteger(n) && n >= 0 && n < episodes.length).slice(0, 6);
         }
@@ -83,7 +88,7 @@
 
     save() {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ currentIndex: this.currentIndex, recent: this.recent.slice(0, 6) }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ currentIndex: this.currentIndex, recent: this.recent.slice(0, 6), topic: this.topic }));
       } catch (_) {}
     }
 
@@ -102,6 +107,14 @@
       let candidates = episodes.map((_, index) => index).filter((index) => !excluded.has(index));
       if (!candidates.length) candidates = episodes.map((_, index) => index).filter((index) => index !== this.currentIndex);
       if (!candidates.length) candidates = [0];
+      if (this.topic) {
+        const matches = candidates.filter((index) => episodes[index].tags.includes(this.topic));
+        this.recommendationNote = matches.length ? `Matched topic: ${this.topic}`
+          : 'No fresh matches for that topic; choosing another episode.';
+        if (matches.length) candidates = matches;
+      } else {
+        this.recommendationNote = '';
+      }
       const previous = this.currentIndex;
       this.currentIndex = candidates[Math.floor(Math.random() * candidates.length)];
       if (previous !== this.currentIndex) this.recent = [previous, ...this.recent.filter((index) => index !== previous)].slice(0, 6);
@@ -158,7 +171,7 @@
       this.shadowRoot.innerHTML = `
         <style>
           :host{position:relative;z-index:2147483000;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-          button,a{font:inherit}
+          button,a,select{font:inherit}.topic-label{display:block;font-size:12px;margin:8px 0}.topic{margin-left:8px;max-width:70%;padding:6px;background:#38281e;color:#fff8ec;border:1px solid #705a49;border-radius:6px}
           .launcher-wrap{position:fixed;left:50%;bottom:max(12px,env(safe-area-inset-bottom));transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:6px}
           .launcher{border:1px solid rgba(255,255,255,.16);border-radius:999px;background:#2a2019;color:#fff8ec;padding:12px 18px;font-weight:750;box-shadow:0 12px 34px rgba(0,0,0,.34);cursor:pointer;touch-action:manipulation;white-space:nowrap}
           .hide-launcher{width:34px;height:34px;flex:0 0 34px;border:1px solid rgba(255,255,255,.18);border-radius:50%;background:#17120f;color:#f0e3d4;font-size:20px;line-height:1;box-shadow:0 10px 26px rgba(0,0,0,.3);cursor:pointer;touch-action:manipulation}
@@ -169,6 +182,8 @@
         ${this.hiddenByUser && !this.open ? '' : this.open ? `
           <aside class="panel" aria-label="JoshBooks podcast player">
             <div class="head"><div><div class="kicker">JoshBooks · reading radio</div><h2 class="title"></h2><p class="meta"></p></div><button class="close" type="button" aria-label="Close podcast player">×</button></div>
+            <label class="topic-label">Next episode topic<select class="topic" aria-label="Next episode topic"></select></label>
+            <p class="note recommendation" role="status"></p>
             ${current.audio ? `<audio class="audio" controls preload="metadata" aria-label="${current.title}"></audio>` : `<iframe class="frame" title="Spotify podcast episode" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>`}
             <div class="actions"><button class="action different" type="button">📚 Different podcast</button>${current.audio ? `<button class="offline" type="button" ${this.offlineState === "downloading" ? "disabled" : ""}>${this.offlineState === "saved" ? "✓ Offline saved · tap to remove" : this.offlineState === "downloading" ? "Downloading…" : this.offlineState === "failed" ? "Retry offline download" : "⬇ Download offline"}</button>` : ""}<a class="link" target="_blank" rel="noopener noreferrer">Open in Spotify ↗</a></div>
             <p class="note">${current.audio ? "Verified publisher audio can be saved locally for offline listening." : "Streaming only for this episode: no verified direct publisher audio source is stored yet."}</p>
@@ -191,6 +206,22 @@
 
       this.shadowRoot.querySelector('.title').textContent = current.title;
       this.shadowRoot.querySelector('.meta').textContent = `${current.show} · ${current.tags.join(' · ')}`;
+      const topicSelect = this.shadowRoot.querySelector('.topic');
+      for (const value of ['', ...topics]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value || 'Any topic';
+        topicSelect.appendChild(option);
+      }
+      topicSelect.value = this.topic;
+      this.shadowRoot.querySelector('.recommendation').textContent = this.recommendationNote;
+      topicSelect.addEventListener('change', () => {
+        this.topic = topics.includes(topicSelect.value) ? topicSelect.value : '';
+        this.save();
+        // Changing the next-episode preference must not replace or restart the current audio.
+        this.shadowRoot.querySelector('.recommendation').textContent = this.topic
+          ? `The next suggestion will prefer ${this.topic}.` : 'The next suggestion can use any topic.';
+      });
       const frame = this.shadowRoot.querySelector('.frame');
       const audio = this.shadowRoot.querySelector('.audio');
       if (frame) {

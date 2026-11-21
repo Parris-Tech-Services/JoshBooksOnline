@@ -39,7 +39,7 @@ export default function RootLayout({
         </AuthProvider>
         <Script
           id="joshbooks-podcast-player"
-          src="/book-podcast-player.js?v=3"
+          src="/book-podcast-player.js?v=4"
           strategy="afterInteractive"
         />
       </body>
