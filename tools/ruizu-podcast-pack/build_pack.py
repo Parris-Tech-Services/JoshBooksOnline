@@ -36,7 +36,7 @@ SHOWS = [
   ('Parenting & family', [('Good Inside with Dr. Becky','Good Inside with Dr. Becky'),('The Dad Edge Podcast','The Dad Edge')]),
   ('Science & unusual experts', [('Ologies with Alie Ward','Ologies'),('Science Vs','Science Vs')]),
   ('Science fiction audio stories', [('Escape Pod','Escape Pod'),('Clarkesworld Magazine','Clarkesworld')]),
-  ('Dungeons & Dragons actual-play', [('Worlds Beyond Number','Worlds Beyond Number'),('Dungeons and Daddies','Dungeons and Daddies'),('Spout Lore','Spout Lore'),('The Glass Cannon Podcast','The Glass Cannon Podcast')]),
+  ('Dungeons & Dragons actual-play', [('Not Another D&D Podcast','Not Another D&D Podcast'),('Spout Lore','Spout Lore'),('The Glass Cannon Podcast','The Glass Cannon Podcast'),('Dungeons and Daddies','Dungeons and Daddies'),('Worlds Beyond Number','Worlds Beyond Number')]),
   ('Music explained by the artists', [('Song Exploder','Song Exploder'),('Strong Songs','Strong Songs')]),
   ('Everyday economics', [('Planet Money','Planet Money'),('The Indicator from Planet Money','The Indicator')]),
   ('Curious mysteries & the internet', [('Search Engine','Search Engine'),('Endless Thread','Endless Thread')]),
@@ -129,10 +129,10 @@ def feed_episodes(feed_url, category=""):
     for elem in root.findall('.//item')[:100]:
         title=(elem.findtext('title') or 'Untitled').strip()
         title_key=norm(title)
-        if any(x in title_key for x in ('trailer','bonus subscription','ad free preview','subscription only','premium preview','announcement','touring a brand new live show')):continue
-        if category=='Dungeons & Dragons actual-play' and any(x in title_key for x in ('fireside','class action','chat with','q a','interlude','welcome to worlds')):continue
+        if any(x in title_key for x in ('trailer','bonus subscription','ad free preview','subscription only','premium preview','announcement','touring','live show','buy tickets','one off live','come see us','ticket sales','get ready')):continue
+        if category=='Dungeons & Dragons actual-play' and any(x in title_key for x in ('fireside','class action','chat with','q a','interlude','welcome to worlds','horner corner','aftershow','talkback','behind the scenes')):continue
         if category=='Parenting & family' and ('squishy drop' in title_key):continue
-        if category=='Christian questions & biblical history' and ('bonus episode' in title_key):continue
+        if category=='Christian questions & biblical history' and any(x in title_key for x in ('bonus episode','holiday roast','coming soon')):continue
         encs=elem.findall('enclosure')
         encs+=[x for x in elem if x.tag.endswith('}enclosure')]
         for e in encs:
