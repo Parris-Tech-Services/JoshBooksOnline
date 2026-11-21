@@ -10,6 +10,7 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 
 import au.com.parristech.ruizusync.core.MediaTypes;
+import au.com.parristech.ruizusync.core.SharedUriNames;
 import au.com.parristech.ruizusync.model.SourceItem;
 import au.com.parristech.ruizusync.net.RemoteAudio;
 
@@ -36,6 +37,14 @@ public final class SourceRepo {
         public long size = -1;
         public String mimeType = "";
         public boolean drm;
+        /**
+         * True when the sender supplied no readable file name and {@link #name} was rebuilt from
+         * the MIME type. The file is still an ordinary supported audio file; only its name is a
+         * best effort.
+         */
+        public boolean nameReconstructed;
+        /** True when nothing usable could be read, so the name does not identify a file. */
+        public boolean nameUnresolved;
     }
 
     public static final class TrackTags {
@@ -111,10 +120,46 @@ public final class SourceRepo {
         } catch (Throwable ignored) {
             // Provider unavailable; keep what we can.
         }
+        if (meta.mimeType.isEmpty()) {
+            meta.mimeType = typeOf(uri);
+        }
+        // A share from another app arrives as content://<authority>/<row id>. When the projection
+        // above is refused (a read grant that did not travel with the intent), the cursor yields
+        // nothing and the row id is the only text left. Treating that as a file name is what made
+        // ordinary MP3s appear as an "unsupported format", so resolve the name properly here.
+        if (meta.name.isEmpty() || SharedUriNames.isBareRowId(meta.name)) {
+            SharedUriNames.Resolved resolved =
+                    SharedUriNames.resolve(meta.name, meta.mimeType, lastSegment(uri));
+            meta.name = resolved.name;
+            meta.nameReconstructed = resolved.reconstructed;
+            meta.nameUnresolved = !resolved.supported && !resolved.fromProvider;
+        }
         if (meta.name.isEmpty()) {
-            meta.name = guessName(uri);
+            String guessed = guessName(uri);
+            if (!SharedUriNames.isBareRowId(guessed)) {
+                meta.name = guessed;
+            }
         }
         return meta;
+    }
+
+    /** MIME type the provider itself advertises for this document, or "" when it cannot say. */
+    private String typeOf(Uri uri) {
+        try {
+            String type = resolver.getType(uri);
+            return type == null ? "" : type;
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static String lastSegment(Uri uri) {
+        try {
+            String segment = uri == null ? null : uri.getLastPathSegment();
+            return segment == null ? "" : segment;
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     /**
@@ -359,8 +404,16 @@ public final class SourceRepo {
                     isPlainHttp(uri) ? "HTTPS link required" : null);
         }
         Meta meta = queryMeta(uri);
+        // Report the real reason instead of "unsupported format" when the sender gave us nothing
+        // that identifies the file: the format may well be fine, we simply cannot read it.
+        String problem = null;
+        if (meta.nameUnresolved) {
+            problem = "The sending app shared no readable file name or audio type for this item. "
+                    + "Share it again from Files, or add it with \"Add files\".";
+        }
         return new SourceItem(uri, meta.name, meta.size, meta.mimeType,
-                parentFolderFromDocId(uri), Collections.<String>emptyList(), null);
+                parentFolderFromDocId(uri), Collections.<String>emptyList(), problem,
+                meta.nameReconstructed);
     }
 
     /**

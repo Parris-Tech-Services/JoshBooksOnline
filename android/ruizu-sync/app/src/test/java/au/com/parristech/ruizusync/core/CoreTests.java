@@ -22,6 +22,7 @@ public final class CoreTests {
         byteFormattingDurations();
         mediaTypes();
         mediaTypesFromMime();
+        sharedUriNames();
         fileNameSanitizer();
         fileNameSanitizerPaths();
         folderPlanner();
@@ -124,6 +125,73 @@ public final class CoreTests {
                 MediaTypes.normalizeAudioName("Track 1", "text/html"));
         checkEquals("name null safe", "",
                 MediaTypes.normalizeAudioName(null, "text/html"));
+    }
+
+    // ---- SharedUriNames -------------------------------------------------------------------
+
+    /**
+     * Regression cover for the reported "8/8 shared files unsupported, shown as numeric ids".
+     *
+     * <p>Every case below is a real shape produced when another app shares audio into RUIZU Sync.
+     * The bug was that a MediaStore row id was used as the file name, so no extension was found and
+     * a perfectly ordinary MP3 was reported as an unsupported format.</p>
+     */
+    private static void sharedUriNames() {
+        check("row id recognised", SharedUriNames.isBareRowId("1000110460"));
+        check("short number is a name, not an id", !SharedUriNames.isBareRowId("99"));
+        check("mixed text is not an id", !SharedUriNames.isBareRowId("track1"));
+        check("empty is not an id", !SharedUriNames.isBareRowId(""));
+        check("null is not an id", !SharedUriNames.isBareRowId(null));
+
+        // 1. The grant travelled with the share: the provider's name is the truth.
+        SharedUriNames.Resolved named = SharedUriNames.resolve(
+                "Blessed Be Your Name.mp3", "audio/mpeg", "1000110460");
+        checkEquals("provider name kept", "Blessed Be Your Name.mp3", named.name);
+        check("provider name flagged as supplied", named.fromProvider);
+        check("provider name supported", named.supported);
+        check("provider name not marked reconstructed", !named.reconstructed);
+
+        // 2. A MediaStore audio row with the projection refused (the reported failure): the row id
+        //    arrives as the name and the type comes from the provider. This must be transferable.
+        SharedUriNames.Resolved mediaId = SharedUriNames.resolve(
+                "1000110460", "audio/mpeg", "1000110460");
+        check("audio row id becomes a supported name", mediaId.supported);
+        check("audio row id is not shown as the bare id", !mediaId.name.equals("1000110460"));
+        check("audio row id name keeps traceability", mediaId.name.contains("1000110460"));
+        check("audio row id name has the audio extension", mediaId.name.endsWith(".mp3"));
+        check("audio row id marked reconstructed", mediaId.reconstructed);
+
+        // 3. No name at all from the sender, only a MIME type.
+        SharedUriNames.Resolved noName = SharedUriNames.resolve(null, "audio/x-m4a", "1734");
+        checkEquals("mime-only share gets an m4a name", "Shared audio 1734.m4a", noName.name);
+        check("mime-only share supported", noName.supported);
+
+        // 4. An opaque Google Drive style document id plus a known type.
+        SharedUriNames.Resolved drive = SharedUriNames.resolve(
+                null, "audio/flac", "acc=1;doc=encoded=abc123");
+        checkEquals("drive doc id gets a flac name", "Shared audio.flac", drive.name);
+        check("drive doc id supported", drive.supported);
+
+        // 5. A row id with no type at all: report honestly rather than invent a format.
+        SharedUriNames.Resolved unknown = SharedUriNames.resolve("1000110460", null, "1000110460");
+        check("unknown type is not claimed supported", !unknown.supported);
+        check("unknown type is not invented", !unknown.name.contains(".mp3"));
+
+        // 6. Nothing usable whatsoever.
+        SharedUriNames.Resolved nothing = SharedUriNames.resolve(null, "", null);
+        checkEquals("nothing resolvable gives no name", "", nothing.name);
+        check("nothing resolvable is unsupported", !nothing.supported);
+
+        // 7. A genuine unsupported file keeps its real name so the user can see what was skipped.
+        SharedUriNames.Resolved pdf = SharedUriNames.resolve("liner notes.pdf", "application/pdf", "7");
+        checkEquals("non-audio name kept verbatim", "liner notes.pdf", pdf.name);
+        check("non-audio stays unsupported", !pdf.supported);
+        check("non-audio name not reconstructed", !pdf.reconstructed);
+
+        // 8. A numeric name that is really a file name must not be treated as a row id.
+        SharedUriNames.Resolved numericName = SharedUriNames.resolve("99.mp3", "audio/mpeg", "99");
+        checkEquals("numeric filename kept", "99.mp3", numericName.name);
+        check("numeric filename supported", numericName.supported);
     }
 
     // ---- FileNameSanitizer ----------------------------------------------------------------

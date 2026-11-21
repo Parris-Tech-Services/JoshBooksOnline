@@ -591,12 +591,16 @@ public final class MainActivity extends Activity implements TransferManager.List
         List<SourceItem> sources = state.sources();
         int supported = 0;
         int unsupported = 0;
+        int rebuilt = 0;
         long knownBytes = 0;
         for (SourceItem item : sources) {
             if (item.supportedFormat()) {
                 supported++;
             } else {
                 unsupported++;
+            }
+            if (item.nameReconstructed) {
+                rebuilt++;
             }
             if (item.size > 0) {
                 knownBytes += item.size;
@@ -614,6 +618,10 @@ public final class MainActivity extends Activity implements TransferManager.List
             if (unsupported > 0) {
                 sb.append("\n").append(unsupported).append(unsupported == 1 ? " file" : " files")
                         .append(" in an unsupported format will be skipped");
+            }
+            if (rebuilt > 0) {
+                sb.append("\n").append(rebuilt).append(rebuilt == 1 ? " file arrived" : " files arrived")
+                        .append(" without a file name; showing names based on the audio type");
             }
             sb.append('\n');
             int shown = 0;
