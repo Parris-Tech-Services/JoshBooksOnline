@@ -22,9 +22,20 @@ public final class SourceItem {
     public final List<String> treeRelDirs;
     /** Non-null when the file cannot be transferred (unsupported format etc.). */
     public final String problem;
+    /**
+     * True when the sending app supplied no file name and {@link #displayName} was rebuilt from
+     * the audio type. The file itself is fine; only its name is a best effort.
+     */
+    public final boolean nameReconstructed;
 
     public SourceItem(Uri uri, String displayName, long size, String mimeType,
                       String sourceFolder, List<String> treeRelDirs, String problem) {
+        this(uri, displayName, size, mimeType, sourceFolder, treeRelDirs, problem, false);
+    }
+
+    public SourceItem(Uri uri, String displayName, long size, String mimeType,
+                      String sourceFolder, List<String> treeRelDirs, String problem,
+                      boolean nameReconstructed) {
         this.uri = uri;
         this.displayName = displayName == null || displayName.trim().isEmpty() ? "Untitled" : displayName;
         this.size = size;
@@ -32,6 +43,7 @@ public final class SourceItem {
         this.sourceFolder = sourceFolder == null ? "" : sourceFolder;
         this.treeRelDirs = treeRelDirs == null ? Collections.<String>emptyList() : treeRelDirs;
         this.problem = problem;
+        this.nameReconstructed = nameReconstructed;
     }
 
     public boolean supportedFormat() {

@@ -17,9 +17,12 @@ import org.junit.runner.RunWith;
 
 import au.com.parristech.ruizusync.core.MediaTypes;
 import au.com.parristech.ruizusync.io.SourceRepo;
+import au.com.parristech.ruizusync.model.SourceItem;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -100,5 +103,19 @@ public final class MediaStoreSourceTest {
         assertTrue("resolved name must be a supported audio format: " + meta.name,
                 MediaTypes.isSupported(meta.name));
         assertEquals("audio/mpeg", MediaTypes.mimeTypeFor(meta.name));
+        assertFalse("a provider that names the file is not a reconstruction",
+                meta.nameReconstructed);
+    }
+
+    @Test
+    public void describeOffersTheSharedRowForTransfer() {
+        SourceRepo repo = new SourceRepo(context);
+        SourceItem item = repo.describe(inserted);
+
+        assertEquals("the whole share path must keep the real file name", FILE_NAME,
+                item.displayName);
+        assertTrue("a shared MP3 must be selectable, not skipped", item.supportedFormat());
+        assertNull("a readable name and type is not a transfer problem", item.problem);
+        assertTrue("size should reach the transfer estimate", item.size > 0);
     }
 }

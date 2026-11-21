@@ -7,18 +7,19 @@ import java.util.*;
 
 /** Test APK only. Filesystem-backed DocumentsProvider with injectable USB faults. */
 public final class FakeUsbProvider extends DocumentsProvider {
-    static volatile boolean disconnected, full, corrupt, renameFails;
+    static volatile boolean disconnected, full, corrupt, renameFails, blankNames;
     static final String AUTHORITY = "au.com.parristech.ruizusync.test.usb";
     static final Map<String,String> names = new LinkedHashMap<>();
     static File root;
     public boolean onCreate() { root = new File(getContext().getCacheDir(),"usb-test"); root.mkdirs(); return true; }
     static synchronized void reset() {
-        disconnected=full=corrupt=renameFails=false; names.clear();
+        disconnected=full=corrupt=renameFails=blankNames=false; names.clear();
         if (root != null && root.listFiles() != null) for (File f:root.listFiles()) f.delete();
     }
     private void connected() throws FileNotFoundException { if(disconnected) throw new FileNotFoundException("USB detached"); }
     @Override public synchronized Bundle call(String method, String argument, Bundle extras) {
-        if (!Arrays.asList("reset", "disconnected", "full", "corrupt", "renameFails", "state").contains(method)) {
+        if (!Arrays.asList("reset", "disconnected", "full", "corrupt", "renameFails", "blankNames",
+                "addName", "state").contains(method)) {
             return super.call(method, argument, extras);
         }
         if (method.equals("reset")) reset();
@@ -26,6 +27,13 @@ public final class FakeUsbProvider extends DocumentsProvider {
         if (method.equals("full")) full=Boolean.parseBoolean(argument);
         if (method.equals("corrupt")) corrupt=Boolean.parseBoolean(argument);
         if (method.equals("renameFails")) renameFails=Boolean.parseBoolean(argument);
+        // Simulates a sender that grants read access but exposes no display name, which is the
+        // shape of another app sharing a MediaStore row whose projection is refused.
+        if (method.equals("blankNames")) blankNames=Boolean.parseBoolean(argument);
+        if (method.equals("addName") && argument != null) {
+            int tab = argument.indexOf('\t');
+            if (tab > 0) names.put(argument.substring(0, tab), argument.substring(tab + 1));
+        }
         Bundle result=new Bundle(); result.putInt("count",names.size());
         result.putStringArrayList("names",new ArrayList<>(names.values()));
         result.putStringArrayList("ids",new ArrayList<>(names.keySet()));
@@ -40,6 +48,7 @@ public final class FakeUsbProvider extends DocumentsProvider {
             DocumentsContract.Document.COLUMN_MIME_TYPE,DocumentsContract.Document.COLUMN_SIZE,DocumentsContract.Document.COLUMN_FLAGS});
     }
     private void row(MatrixCursor c,String id,String name) {
+        if (blankNames && !id.equals("root")) name="";
         c.addRow(new Object[]{id,name,id.equals("root")?DocumentsContract.Document.MIME_TYPE_DIR:"audio/mpeg",new File(root,id).length(),
             DocumentsContract.Document.FLAG_SUPPORTS_WRITE|DocumentsContract.Document.FLAG_SUPPORTS_DELETE|DocumentsContract.Document.FLAG_SUPPORTS_RENAME|DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE});
     }
