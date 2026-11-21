@@ -25,7 +25,7 @@ from pathlib import Path
 
 NOW = datetime(2026, 11, 21, tzinfo=timezone.utc)
 MAX_BYTES_PER_SOURCE = 85 * 1024 * 1024
-MAX_SECONDS = 65 * 60
+MAX_SECONDS = 150 * 60
 MAX_EPISODES = 20
 USER_AGENT = 'RUIZUOfflinePack/1.0 (personal podcast player; fetches public RSS enclosures)'
 SHOWS = [
@@ -36,7 +36,7 @@ SHOWS = [
   ('Parenting & family', [('Good Inside with Dr. Becky','Good Inside with Dr. Becky'),('The Dad Edge Podcast','The Dad Edge')]),
   ('Science & unusual experts', [('Ologies with Alie Ward','Ologies'),('Science Vs','Science Vs')]),
   ('Science fiction audio stories', [('Escape Pod','Escape Pod'),('Clarkesworld Magazine','Clarkesworld')]),
-  ('Dungeons & Dragons actual-play', [('Worlds Beyond Number','Worlds Beyond Number'),('Dungeons and Daddies','Dungeons and Daddies')]),
+  ('Dungeons & Dragons actual-play', [('Worlds Beyond Number','Worlds Beyond Number'),('Dungeons and Daddies','Dungeons and Daddies'),('Spout Lore','Spout Lore'),('The Glass Cannon Podcast','The Glass Cannon Podcast')]),
   ('Music explained by the artists', [('Song Exploder','Song Exploder'),('Strong Songs','Strong Songs')]),
   ('Everyday economics', [('Planet Money','Planet Money'),('The Indicator from Planet Money','The Indicator')]),
   ('Curious mysteries & the internet', [('Search Engine','Search Engine'),('Endless Thread','Endless Thread')]),
@@ -122,13 +122,17 @@ def resolve_feed(query, expected):
     return matches[0][2],matches[0][3]
 
 
-def feed_episodes(feed_url):
+def feed_episodes(feed_url, category=""):
     data=get(feed_url,max_bytes=12*1024*1024,timeout=30)
     root=ET.fromstring(data)
     eps=[]
     for elem in root.findall('.//item')[:100]:
         title=(elem.findtext('title') or 'Untitled').strip()
-        if any(x in norm(title) for x in ('trailer','bonus subscription','ad free preview','subscription only','premium preview')):continue
+        title_key=norm(title)
+        if any(x in title_key for x in ('trailer','bonus subscription','ad free preview','subscription only','premium preview','announcement','touring a brand new live show')):continue
+        if category=='Dungeons & Dragons actual-play' and any(x in title_key for x in ('fireside','class action','chat with','q a','interlude','welcome to worlds')):continue
+        if category=='Parenting & family' and ('squishy drop' in title_key):continue
+        if category=='Christian questions & biblical history' and ('bonus episode' in title_key):continue
         encs=elem.findall('enclosure')
         encs+=[x for x in elem if x.tag.endswith('}enclosure')]
         for e in encs:
@@ -197,7 +201,7 @@ def choose_slot(index,category,alternatives,work,out_dir):
     for query,expected in alternatives:
         try:
             feed,found=resolve_feed(query,expected)
-            eps=feed_episodes(feed)
+            eps=feed_episodes(feed,category)
         except Exception as e:
             errors.append(f'{expected} feed: {e}');continue
         if not eps:
