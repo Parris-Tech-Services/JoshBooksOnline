@@ -26,7 +26,6 @@ public final class SyncPlanStore {
         public final List<String> destPrefix;
         public final FolderPlanner.OrganiseMode organise;
         public final DuplicateMode duplicates;
-        public final boolean verify;
         public final boolean scopeFolder;
         public final boolean playlists;
         public final boolean convert;
@@ -35,7 +34,7 @@ public final class SyncPlanStore {
 
         public Plan(String sourceTree, String sourceName, String destTree, String destLabel,
                     List<String> destPrefix, FolderPlanner.OrganiseMode organise,
-                    DuplicateMode duplicates, boolean verify, boolean scopeFolder,
+                    DuplicateMode duplicates, boolean scopeFolder,
                     boolean playlists, boolean convert, String playlistName, boolean enabled) {
             this.sourceTree = sourceTree == null ? "" : sourceTree;
             this.sourceName = sourceName == null ? "" : sourceName;
@@ -43,8 +42,7 @@ public final class SyncPlanStore {
             this.destLabel = destLabel == null ? "" : destLabel;
             this.destPrefix = destPrefix == null ? new ArrayList<>() : new ArrayList<>(destPrefix);
             this.organise = organise == null ? FolderPlanner.OrganiseMode.FLAT : organise;
-            this.duplicates = duplicates == null ? DuplicateMode.SKIP_FAST : duplicates;
-            this.verify = verify;
+            this.duplicates = DuplicateMode.safe(duplicates);
             this.scopeFolder = scopeFolder;
             this.playlists = playlists;
             this.convert = convert;
@@ -77,8 +75,9 @@ public final class SyncPlanStore {
             return new Plan(root.optString("sourceTree"), root.optString("sourceName"),
                     root.optString("destTree"), root.optString("destLabel"), prefix,
                     FolderPlanner.OrganiseMode.valueOf(root.optString("organise", FolderPlanner.OrganiseMode.FLAT.name())),
-                    DuplicateMode.valueOf(root.optString("duplicates", DuplicateMode.SKIP_FAST.name())),
-                    root.optBoolean("verify", true), root.optBoolean("scope", false),
+                    DuplicateMode.fromStoredName(root.optString("duplicates", DuplicateMode.SKIP_FAST.name()),
+                            DuplicateMode.SKIP_FAST),
+                    root.optBoolean("scope", false),
                     root.optBoolean("playlists", false), root.optBoolean("convert", false),
                     root.optString("playlistName", ""), root.optBoolean("enabled", true));
         } catch (Throwable ignored) {
@@ -103,7 +102,6 @@ public final class SyncPlanStore {
             root.put("prefix", prefix);
             root.put("organise", plan.organise.name());
             root.put("duplicates", plan.duplicates.name());
-            root.put("verify", plan.verify);
             root.put("scope", plan.scopeFolder);
             root.put("playlists", plan.playlists);
             root.put("convert", plan.convert);
@@ -121,7 +119,7 @@ public final class SyncPlanStore {
             return;
         }
         save(context, new Plan(plan.sourceTree, plan.sourceName, plan.destTree, plan.destLabel,
-                plan.destPrefix, plan.organise, plan.duplicates, plan.verify, plan.scopeFolder,
+                plan.destPrefix, plan.organise, plan.duplicates, plan.scopeFolder,
                 plan.playlists, plan.convert, plan.playlistName, enabled));
     }
 

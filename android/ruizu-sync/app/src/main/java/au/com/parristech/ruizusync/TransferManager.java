@@ -72,7 +72,6 @@ public final class TransferManager {
         public final Uri destTree;
         public final FolderPlanner.OrganiseMode organiseMode;
         public final DuplicateMode duplicateMode;
-        public final boolean verifyAfterCopy;
         public final boolean duplicatesInTargetFolderOnly;
         public final boolean writePlaylists;
         public final String playlistName;
@@ -82,28 +81,26 @@ public final class TransferManager {
 
         public Request(List<SourceItem> sources, Uri destTree,
                        FolderPlanner.OrganiseMode organiseMode, DuplicateMode duplicateMode) {
-            this(sources, destTree, organiseMode, duplicateMode, false, false, false,
+            this(sources, destTree, organiseMode, duplicateMode, false, false,
                     "", null, false, null);
         }
 
         public Request(List<SourceItem> sources, Uri destTree,
                        FolderPlanner.OrganiseMode organiseMode, DuplicateMode duplicateMode,
-                       boolean verifyAfterCopy, boolean duplicatesInTargetFolderOnly,
-                       boolean writePlaylists) {
-            this(sources, destTree, organiseMode, duplicateMode, verifyAfterCopy,
+                       boolean duplicatesInTargetFolderOnly, boolean writePlaylists) {
+            this(sources, destTree, organiseMode, duplicateMode,
                     duplicatesInTargetFolderOnly, writePlaylists, "", null, false, null);
         }
 
         public Request(List<SourceItem> sources, Uri destTree,
                        FolderPlanner.OrganiseMode organiseMode, DuplicateMode duplicateMode,
-                       boolean verifyAfterCopy, boolean duplicatesInTargetFolderOnly,
-                       boolean writePlaylists, String playlistName, List<String> destinationPrefix,
+                       boolean duplicatesInTargetFolderOnly, boolean writePlaylists,
+                       String playlistName, List<String> destinationPrefix,
                        boolean convertToMp3, java.util.Set<String> convertFormats) {
             this.sources = sources;
             this.destTree = destTree;
             this.organiseMode = organiseMode == null ? FolderPlanner.OrganiseMode.FLAT : organiseMode;
             this.duplicateMode = duplicateMode == null ? DuplicateMode.SKIP_FAST : duplicateMode;
-            this.verifyAfterCopy = verifyAfterCopy;
             this.duplicatesInTargetFolderOnly = duplicatesInTargetFolderOnly;
             this.writePlaylists = writePlaylists;
             this.playlistName = playlistName == null ? "" : playlistName;
@@ -522,7 +519,7 @@ public final class TransferManager {
         CopyResult result;
         try {
             result = copyWithRetry(sourceRepo, destRepo, item, sourceUri, sourceDisplayName,
-                    effectiveSize, request.destTree, targetDir, request.verifyAfterCopy);
+                    effectiveSize, request.destTree, targetDir);
         } catch (CancelledException e) {
             throw e;
         } catch (Exception e) {
@@ -550,7 +547,7 @@ public final class TransferManager {
 
     private CopyResult copyWithRetry(SourceRepo sourceRepo, DestRepo destRepo, SourceItem item,
                                      Uri sourceUri, String sourceDisplayName, long effectiveSize,
-                                     Uri destTree, DestRepo.Node targetDir, boolean verify) throws Exception {
+                                     Uri destTree, DestRepo.Node targetDir) throws Exception {
         String desiredName = FileNameSanitizer.fileName(sourceDisplayName);
         IOException lastError = null;
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -570,7 +567,7 @@ public final class TransferManager {
             }
             try {
                 return copyOnce(sourceRepo, destRepo, item, sourceUri, sourceDisplayName, effectiveSize,
-                        destTree, targetDir, targetName, verify);
+                        destTree, targetDir, targetName);
             } catch (CancelledException e) {
                 throw e;
             } catch (IOException e) {
@@ -585,8 +582,7 @@ public final class TransferManager {
 
     private CopyResult copyOnce(SourceRepo sourceRepo, DestRepo destRepo, SourceItem item,
                                 Uri sourceUri, String sourceDisplayName, long effectiveSize,
-                                Uri destTree, DestRepo.Node targetDir, String targetName,
-                                boolean verify) throws Exception {
+                                Uri destTree, DestRepo.Node targetDir, String targetName) throws Exception {
         // Verified publishing stages in an owned .part file, closes/reads back with SHA-256,
         // then renames. Existing music, podcasts and .LIB files are never deleted or overwritten.
         checkFreeSpace(effectiveSize);
@@ -616,8 +612,8 @@ public final class TransferManager {
         // against the source before renaming, so reaching this point proves the bytes on the
         // player match the source. Record it explicitly: the transfer log is the user's
         // evidence that a copy really succeeded, and this line makes it checkable.
-        // This always holds - SafTransfer verifies regardless of request.verifyAfterCopy, so
-        // that flag is currently advisory and cannot actually disable verification.
+        // Verification is unconditional: SafTransfer always reads the staged copy back and
+        // compares it, so there is no option that can skip it.
         log("SHA-256 verified: " + targetName);
         return new CopyResult(created, bytes);
     }

@@ -122,7 +122,6 @@ public final class MainActivity extends Activity implements TransferManager.List
     private TextView countersText;
     private TextView speedText;
     private TextView logText;
-    private CheckBox verifyCheck;
     private CheckBox scopeCheck;
     private CheckBox playlistCheck;
     private CheckBox convertCheck;
@@ -313,9 +312,13 @@ public final class MainActivity extends Activity implements TransferManager.List
         });
         optionsCard.addView(duplicateSpinner, margins(0, dp(4), 0, dp(14)));
 
-        verifyCheck = choice("Verify each copy (slower, catches USB errors)", state.verifyAfterCopy(),
-                (button, checked) -> state.setVerifyAfterCopy(checked));
-        optionsCard.addView(verifyCheck);
+        // Every copy is verified unconditionally (stage, read back, compare SHA-256), so there
+        // is no option to offer here. A checkbox that changed nothing was misleading.
+        TextView verifyNote = new TextView(this);
+        verifyNote.setText("Every copy is verified with SHA-256 before it is published.");
+        verifyNote.setTextSize(12);
+        verifyNote.setTextColor(getColor(R.color.text_muted));
+        optionsCard.addView(verifyNote, margins(0, 0, 0, dp(14)));
         scopeCheck = choice("Only match duplicates inside the destination folder",
                 state.duplicatesInTargetFolderOnly(),
                 (button, checked) -> state.setDuplicatesInTargetFolderOnly(checked));
@@ -1140,7 +1143,7 @@ public final class MainActivity extends Activity implements TransferManager.List
     private void beginTransfer(List<SourceItem> sources, Uri dest) {
         TransferManager.Request request = new TransferManager.Request(
                 sources, dest, state.organiseMode(), state.duplicateMode(),
-                state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(),
+                state.duplicatesInTargetFolderOnly(),
                 state.writePlaylists(), "", null, state.convertToMp3(), null);
         PlayerFolderStore.remember(this, dest, state.destinationLabel());
         try {
@@ -1568,7 +1571,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             return;
         }
         TransferManager.Request request = new TransferManager.Request(playlist.items, dest,
-                state.organiseMode(), state.duplicateMode(), state.verifyAfterCopy(),
+                state.organiseMode(), state.duplicateMode(),
                 state.duplicatesInTargetFolderOnly(), state.writePlaylists(), name, null,
                 state.convertToMp3(), null);
         try {
@@ -1800,7 +1803,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         Uri sourceTree = trees.get(0);
         SyncPlanStore.Plan plan = new SyncPlanStore.Plan(sourceTree.toString(), "",
                 dest.toString(), state.destinationLabel(), Collections.<String>emptyList(),
-                state.organiseMode(), state.duplicateMode(), state.verifyAfterCopy(),
+                state.organiseMode(), state.duplicateMode(),
                 state.duplicatesInTargetFolderOnly(), state.writePlaylists(), false, "",
                 planEnabledCheck != null && planEnabledCheck.isChecked());
         SyncPlanStore.save(this, plan);
@@ -1837,7 +1840,6 @@ public final class MainActivity extends Activity implements TransferManager.List
                     state.setDestination(dest, plan.destLabel);
                     state.setOrganiseMode(plan.organise);
                     state.setDuplicateMode(plan.duplicates);
-                    state.setVerifyAfterCopy(plan.verify);
                     state.setDuplicatesInTargetFolderOnly(plan.scopeFolder);
                     state.setWritePlaylists(plan.playlists);
                     syncOptionViews();
@@ -1912,9 +1914,11 @@ public final class MainActivity extends Activity implements TransferManager.List
 
     private void syncOptionViews() {
         organiseSpinner.setSelection(state.organiseMode().ordinal());
-        duplicateSpinner.setSelection(state.duplicateMode().ordinal());
-        if (verifyCheck != null) {
-            verifyCheck.setChecked(state.verifyAfterCopy());
+        // Must map through the selectable list, not the enum ordinal: OVERWRITE is excluded
+        // from the spinner, so ordinals no longer line up with adapter positions.
+        duplicateSpinner.setSelection(
+                Math.max(0, DuplicateMode.selectable().indexOf(state.duplicateMode())));
+        if (scopeCheck != null) {
             scopeCheck.setChecked(state.duplicatesInTargetFolderOnly());
             playlistCheck.setChecked(state.writePlaylists());
             convertCheck.setChecked(state.convertToMp3());
@@ -1986,7 +1990,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
         TransferManager.Request request = new TransferManager.Request(
                 new ArrayList<>(failed), dest, state.organiseMode(), state.duplicateMode(),
-                state.verifyAfterCopy(), state.duplicatesInTargetFolderOnly(), state.writePlaylists(),
+                state.duplicatesInTargetFolderOnly(), state.writePlaylists(),
                 "", null, state.convertToMp3(), null);
         try {
             manager.start(request);
@@ -2049,7 +2053,6 @@ public final class MainActivity extends Activity implements TransferManager.List
         state.setDestination(pending.request.destTree, "");
         state.setOrganiseMode(pending.request.organiseMode);
         state.setDuplicateMode(pending.request.duplicateMode);
-        state.setVerifyAfterCopy(pending.request.verifyAfterCopy);
         state.setDuplicatesInTargetFolderOnly(pending.request.duplicatesInTargetFolderOnly);
         state.setWritePlaylists(pending.request.writePlaylists);
         syncOptionViews();

@@ -29,7 +29,6 @@ public final class AppState {
     private String destLabel = "";
     private FolderPlanner.OrganiseMode organiseMode = FolderPlanner.OrganiseMode.FLAT;
     private DuplicateMode duplicateMode = DuplicateMode.SKIP_FAST;
-    private boolean verifyAfterCopy = true;
     private boolean duplicatesInTargetFolderOnly = false;
     private boolean writePlaylists = false;
     private boolean convertToMp3 = false;
@@ -106,13 +105,7 @@ public final class AppState {
         duplicateMode = DuplicateMode.safe(mode);
     }
 
-    public synchronized boolean verifyAfterCopy() {
-        return verifyAfterCopy;
-    }
 
-    public synchronized void setVerifyAfterCopy(boolean value) {
-        verifyAfterCopy = value;
-    }
 
     public synchronized boolean duplicatesInTargetFolderOnly() {
         return duplicatesInTargetFolderOnly;
