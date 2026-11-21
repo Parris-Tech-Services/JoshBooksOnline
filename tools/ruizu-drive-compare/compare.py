@@ -237,7 +237,14 @@ def compare_files(sources: list[dict], player: list[dict], complete: bool) -> tu
         if s == 0:
             status, reason, candidates = "SOURCE_EMPTY", "Zero-byte source; not playable audio", []
         elif by_digest:
-            status, reason, candidates = "VERIFIED_PRESENT", "Matching SHA-256 supplied by both inventories", by_digest
+            # Identical full-file SHA-256 requires identical byte length. Conflicting known
+            # sizes mean at least one inventory value is stale, corrupt or not full-file data.
+            # Never assert verified identity across that contradiction.
+            compatible = [p for p in by_digest if s is None or p["size_bytes"] is None or p["size_bytes"] == s]
+            if compatible:
+                status, reason, candidates = "VERIFIED_PRESENT", "Matching full-file SHA-256 supplied by both inventories; known sizes agree", compatible
+            else:
+                status, reason, candidates = "POSSIBLE_MATCH", "SHA-256 values match but supplied byte sizes contradict; verify both inventories", by_digest
         elif any(x["size_bytes"] == s and s is not None for x in direct):
             same_size = [x for x in direct if x["size_bytes"] == s]
             # A matching name/size is not enough if two independently supplied hashes contradict.

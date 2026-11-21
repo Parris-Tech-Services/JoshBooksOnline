@@ -55,6 +55,28 @@ class CompareTests(unittest.TestCase):
                                 [self.player(name="Changed Name.mp3", sha256=digest)], True)
         self.assertEqual(rows[0]["status"], "VERIFIED_PRESENT")
 
+    def test_same_hash_with_conflicting_known_sizes_is_not_verified(self):
+        # A full-file digest cannot describe two different known byte lengths.
+        digest = "a" * 64
+        _, rows = compare_files([self.drive(size=123, content_sha256=digest)],
+                                [self.player(size=456, sha256=digest)], True)
+        self.assertEqual(rows[0]["status"], "POSSIBLE_MATCH")
+        self.assertIn("sizes contradict", rows[0]["reason"])
+
+    def test_same_hash_with_multiple_candidates_prefers_size_consistent(self):
+        digest = "b" * 64
+        _, rows = compare_files([self.drive(size=123, content_sha256=digest)],
+                                [self.player(name="Wrong.mp3", size=999, sha256=digest),
+                                 self.player(name="Correct.mp3", size=123, sha256=digest)], True)
+        self.assertEqual(rows[0]["status"], "VERIFIED_PRESENT")
+        self.assertEqual(rows[0]["player_paths"], ["Correct.mp3"])
+
+    def test_matching_digest_with_unknown_size_still_matches(self):
+        digest = "c" * 64
+        _, rows = compare_files([self.drive(size=None, content_sha256=digest)],
+                                [self.player(size=123, sha256=digest)], True)
+        self.assertEqual(rows[0]["status"], "VERIFIED_PRESENT")
+
     def test_conflicting_hash_cannot_be_likely(self):
         _, rows = compare_files([self.drive(content_sha256="a"*64)],
                                 [self.player(sha256="b"*64)], True)
