@@ -21,10 +21,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Check FFmpeg availability
+      - name: Install and verify MP3 audio codecs
         run: |
-          ffmpeg -version | head -1
-          ffprobe -version | head -1
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version
+          ffprobe -version
       - name: Build 20 diverse real podcast episodes for personal offline listening
         run: python -u tools/ruizu-podcast-pack/build_pack.py /tmp/ruizu-pack
       - name: Upload episode ZIP and verification reports (temporary private listening copy)
