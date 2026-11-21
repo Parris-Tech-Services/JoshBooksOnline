@@ -1,8 +1,42 @@
 # RUIZU Sync feature to-do list
 
-Status: **living implementation and validation backlog** (reviewed 20 November 2026). Items 1–11 retain their original numbers and full acceptance criteria. Items 12–27 record outstanding verification, usability and release work. An unchecked item may already be implemented in code; it means its full acceptance criteria have **not** been independently verified. Never infer completion from a passing build alone.
+Status: **living implementation and validation backlog** (reviewed 21 November 2026). Items 1–11 retain their original numbers and full acceptance criteria. Items 12–27 record outstanding verification, usability and release work. An unchecked item may already be implemented in code; it means its full acceptance criteria have **not** been independently verified. Never infer completion from a passing build alone.
 
 Purpose: make RUIZU Sync a trustworthy music, podcast and audiobook manager, using the existing SAF transfer manager and verified writer. **This file is a tracking document, not evidence that any task was implemented by a documentation change.**
+
+## Current status at 21 November 2026
+
+Only #12 meets its full acceptance criteria. Unchecked items retain their original requirements; implemented code is distinguished from observed behaviour. Updating this document does not complete those requirements.
+
+| Item | Status | Remaining work / evidence |
+| --- | --- | --- |
+| 1 | **PARTIALLY COMPLETE** | Conversion code and reported on-phone WAV self-test exist; quality controls, estimates, cancellation/cleanup and representative player playback still need acceptance. |
+| 2 | **PARTIALLY COMPLETE** | Playlist creation/export exists; track arrangement, collision/Unicode references and actual player ordering/M3U support remain to verify. |
+| 3 | **PARTIALLY COMPLETE** | Subscription and download preparation code exists; scheduling, per-feed limits, Wi-Fi/charging preferences and restart/duplicate/USB acceptance remain. |
+| 4 | **PARTIALLY COMPLETE** | Range/resume policy and recoverable transfer code exist; changed validators, process death, permission loss and provider-dependent USB resume remain to verify. |
+| 5 | **PARTIALLY COMPLETE** | A saved plan exists; named multiple plans, editing/removal, restart/revoked-grant recovery and preview acceptance remain. |
+| 6 | **PARTIALLY COMPLETE** | Connection-triggered offer exists; physical reconnect, wrong-drive protection and repeated-event/concurrency acceptance remain. Unattended operation is not verified. |
+| 7 | **PARTIALLY COMPLETE** | History/retry code exists; searchable records, bounded retention and accurate interrupted/restarted run acceptance remain. |
+| 8 | **PARTIALLY COMPLETE** | OPML import/export exists; feed-selection preview and complete malformed/oversized/duplicate/Unicode/round-trip acceptance remain. |
+| 9 | **NOT COMPLETE** | Opt-in loudness processing and clipping/source-preservation tests, plus audible player verification, remain. |
+| 10 | **NOT COMPLETE** | Verified device artwork profile, copy-only embedding/resizing and malformed-image/player-display acceptance remain. |
+| 11 | **PARTIALLY COMPLETE** | Safe-removal guidance exists; actual Samsung eject and all active-I/O/lifecycle states remain unverified (see 23). |
+| 12 | **VERIFIED COMPLETE** | 21 emulator instrumentation tests passed, none skipped; evidence linked below. |
+| 13 | **PARTIALLY COMPLETE** | Historical physical inventory reported; reconcile app totals with an independent current scan and account for every change. No new physical scan was performed here. |
+| 14 | **PARTIALLY COMPLETE** | Read-only comparator and offline review shipped in PRs #22/#26; real source-to-player reconciliation and missing-only transfer remain unverified. |
+| 15 | **NOT COMPLETE** | Reliable grouping, independent album tracklists and real incomplete-album comparison remain. |
+| 16 | **NOT COMPLETE** | Real local/Drive picker, nested trees, offline/revoked permissions and restart-to-USB transfer acceptance remain. |
+| 17 | **PARTIALLY COMPLETE** | PRs #27/#28 merged: real cross-app ACTION_SEND_MULTIPLE grants, filenames/streams, sibling denial and missing-name MIME fallback passed. Real Files-app sharing, separate ACTION_SEND coverage and A55 reproduction/fix acceptance remain. |
+| 18 | **NOT COMPLETE** | Actual player indexing, album/podcast/converted audio playback, Unicode, nested folders and M3U ordering remain unverified. |
+| 19 | **PARTIALLY COMPLETE** | Fake-provider instrumentation covers transfer faults/recovery; physical unplug/cable faults, process death, FAT32/large files and preservation acceptance remain. |
+| 20 | **PARTIALLY COMPLETE** | Progress/history/retry implemented; restart/notification/ETA/interrupted-state acceptance remains. |
+| 21 | **PARTIALLY COMPLETE** | Feed/download/resume code and tests exist; genuine oversized feed, remote-content changes and disconnected-preparation-to-player acceptance remain. |
+| 22 | **PARTIALLY COMPLETE** | Canonical signed 1.2.4 identity verified; actual 1.2.4 phone upgrade, retained settings/grants and any legacy package migration remain unverified. |
+| 23 | **PARTIALLY COMPLETE** | Guidance exists; system-confirmed eject and real A55/player lifecycle acceptance remain. |
+| 24 | **PARTIALLY COMPLETE** | Saved plan and connection offer exist; physical identity/permission persistence, repeated-attach and wrong-target acceptance remain. |
+| 25 | **NOT COMPLETE** | Same remaining normalisation/artwork work as 9 and 10; not a basic-transfer release blocker. |
+| 26 | **NOT COMPLETE** | Optional scheduling, download preferences, multiple plans, richer browsing and lifecycle/job migration remain. |
+| 27 | **PARTIALLY COMPLETE** | Signed 1.2.4 APK delivered; automated verification passed. Final physical acceptance and public release notes/download publication remain to confirm. |
 
 ## Numbered backlog
 
@@ -54,40 +88,40 @@ Purpose: make RUIZU Sync a trustworthy music, podcast and audiobook manager, usi
 
 Evidence from the actual Samsung Galaxy A55 + RUIZU session (reported by the device-testing agent on 20 November 2026):
 
-- The phone detected the ACTIONS USB drive as volume \`0000-006F\`; the app resolved its destination folder. A read-only scan found **1,617 existing files** and approximately **40 GB free**.
+- The phone detected the ACTIONS USB drive as volume `0000-006F`; the app resolved its destination folder. A read-only scan found **1,617 existing files** and approximately **40 GB free**.
 - A 52,079-byte HTTPS MP3 was transferred successfully through the app, byte-for-byte matched its separately downloaded source by hash, and a repeat transfer correctly skipped the duplicate. The temporary test audio was removed, leaving the earlier player file count unchanged.
 - An on-device WAV-to-MP3 conversion self-test passed, and Android launched a non-debuggable version 1.2.1 APK. A test M3U file was written and read back byte-identical; this does **not** prove playback compatibility.
-- GitHub CI passed JVM/unit tests, static APK signing/manifest checks and emulator launch. **Passing those checks does not establish that the four existing SAF instrumentation suites executed.** PR #18 was open and running those tests when this list was updated; the outcome must be checked, not assumed.
-- The player inventory and \`LibraryComparison\` (statuses \`LIKELY_PRESENT\`, \`POSSIBLE_MATCH\`, \`MISSING\`) are implemented and have a JVM test. They were **not** yet used end-to-end to compare the physical RUIZU with an authorised local/Google Drive source collection.
+- Current automated evidence: PRs #27 and #28 are merged; CI run 44863422504 passed JVM/APK verification, release emulator launch and 21 Android instrumentation tests (zero failures, errors or skips). Item 12 is complete. Cross-app grants and missing-name fallback are tested; this does not prove the reported phone failure is resolved.
+- The player inventory and `LibraryComparison` (statuses `LIKELY_PRESENT`, `POSSIBLE_MATCH`, `MISSING`) are implemented and have a JVM test. They were **not** yet used end-to-end to compare the physical RUIZU with an authorised local/Google Drive source collection.
 - The file picker, Drive DocumentsProvider, real share intent, full albums, USB interruption/cancel recovery, actual RUIZU indexing/playback, and end-to-end safe eject remain incompletely validated.
 - The app already includes source selection, folder organisation, RSS/Atom browsing, HTTPS links, podcast subscriptions/download preparation, playlists/OPML, saved plan, transfer history, retry, MP3 conversion, read-only library audit and eject **guidance**. Do not rebuild these from scratch or mark them finished on presence alone.
-- Installation identity requires care: a signed \`.stable\` build and the installed \`au.com.parristech.ruizusync\` have existed. PR #18 proposes restoring the latter as the canonical package after matching installed and release signing fingerprints. Confirm PR/CI/merge state and the device's installed certificate before changing update paths or uninstalling anything.
+- Current installer: **1.2.4 / versionCode 8**, package `au.com.parristech.ruizusync`, release certificate SHA-256 `d16afeee87dd25be0421223d748ab175cbb37b4c5152042933342cc5880307b4`. APK SHA-256 `1e5802bb6abc7071c798257b4f74ad90c52a18e73726c2e93fab9c52e16bb212`; source PR #28 / merge `fd5c3e789eeabb0e87d96c47417925c8b1499178`. Package/version and signing passed CI; the downloaded installer certificate was independently checked. Physical installation, preservation of saved settings/SAF grants and transfer on 1.2.4 remain unverified. Any legacy `.stable` migration still needs separate evidence.
 
 ## Numbered validation and completion backlog (12–27)
 
 The original feature items 1–11 above remain the authoritative feature-specific acceptance criteria. These additional numbers capture the **outstanding work identified from the real-device audit** and should be completed in priority order. **Do not mark an item complete until its evidence and state are linked.**
 
-12. [ ] **Execute all existing Android SAF instrumentation tests in CI.** Run \`SafTransferTest\`, \`DestinationAccessTest\`, \`TransferManagerTest\` and \`MainActivityTest\` against the test-only \`FakeUsbProvider\` on an API 34 emulator. Keep the \`safTest\` test-only provider isolated from the distributed APK; publish actual test counts, failures, logs and artifacts. **Started in PR #18; do not equate a workflow job starting with tests passing.** Done when all suites run, pass, and failures are real regressions rather than skipped jobs.
+12. [x] **Execute all existing Android SAF instrumentation tests in CI.** Run `SafTransferTest`, `DestinationAccessTest`, `TransferManagerTest` and `MainActivityTest` against the test-only `FakeUsbProvider` on an API 34 emulator. Keep the `safTest` test-only provider isolated from the distributed APK; publish actual test counts, failures, logs and artifacts. **VERIFIED COMPLETE:** [PR #27](https://github.com/Parris-Tech-Services/JoshBooksOnline/pull/27) and [PR #28](https://github.com/Parris-Tech-Services/JoshBooksOnline/pull/28) are merged. [CI run 44863422504](https://github.com/Parris-Tech-Services/JoshBooksOnline/actions/runs/44863422504): 21 instrumentation tests, zero failures/errors/skips; [XML and log artifact](https://github.com/Parris-Tech-Services/JoshBooksOnline/actions/runs/44863422504/artifacts/14691185840). Includes the four named suites, MediaStore, shared-name fallback and actual cross-app grant tests. Done when all suites run, pass, and failures are real regressions rather than skipped jobs.
 
-13. [ ] **Prove the read-only inventory on physical RUIZU volume \`0000-006F\`.** Enumerate supported audio, Music/Podcasts folders, unknown extensions and system files; exclude \`.LIB\` data from changes. Reconcile the app's inventory with a separate independent scan and demonstrate that all existing files are left untouched. Done when a real inventory report and totals are captured and reconciled.
+13. [ ] **Prove the read-only inventory on physical RUIZU volume `0000-006F`.** Enumerate supported audio, Music/Podcasts folders, unknown extensions and system files; exclude `.LIB` data from changes. Reconcile the app's inventory with a separate independent scan and demonstrate that all existing files are left untouched. Done when a real inventory report and totals are captured and reconciled.
 
-14. [ ] **Demonstrate missing-music and missing-podcast comparison against actual sources.** Select an authorised phone/Drive music folder or podcast download collection, invoke the existing comparison engine, and show \`LIKELY_PRESENT\`, \`POSSIBLE_MATCH\`, and \`MISSING\` with clear caveats. Include true duplicates, same name/different size, and renamed/alternate-format versions. Never classify a track as “missing” without a source catalogue. Done when real reports and missing-only transfer selection are verified without deleting existing tracks.
+14. [ ] **Demonstrate missing-music and missing-podcast comparison against actual sources.** Select an authorised phone/Drive music folder or podcast download collection, invoke the existing comparison engine, and show `LIKELY_PRESENT`, `POSSIBLE_MATCH`, and `MISSING` with clear caveats. Include true duplicates, same name/different size, and renamed/alternate-format versions. Never classify a track as “missing” without a source catalogue. Done when real reports and missing-only transfer selection are verified without deleting existing tracks.
 
 15. [ ] **Add reliable artist/album/podcast grouping and incomplete-album reporting.** Extract available tags and folder structure without inventing metadata; distinguish unknown albums/artists from absent ones. Define what constitutes a “complete album” (an independently known source tracklist, not guessed from a folder), handle compilations and various artists, and show uncertain cases honestly. Done when album-level comparison against a known source tracklist passes tests and a real scan. Cross-references library comparison item 14.
 
-16. [ ] **Verify phone/Google Drive file and folder selection end-to-end.** Exercise \`Add files\`, \`Add folder\`, nested album trees, the Android DocumentsUI picker and Google Drive's SAF/DocumentsProvider; test permissions after app restart, unavailable or offline files and revoked grants. The existing UI automation sometimes receives \`null root node\`; avoid stale UI dumps and blind ADB interactions. Done when representative local and Drive audio can be selected, copied and read back on the player.
+16. [ ] **Verify phone/Google Drive file and folder selection end-to-end.** Exercise `Add files`, `Add folder`, nested album trees, the Android DocumentsUI picker and Google Drive's SAF/DocumentsProvider; test permissions after app restart, unavailable or offline files and revoked grants. The existing UI automation sometimes receives `null root node`; avoid stale UI dumps and blind ADB interactions. Done when representative local and Drive audio can be selected, copied and read back on the player.
 
-17. [ ] **Resolve MediaStore/share filename handling.** Reproduce the shared MP3 that displayed numeric URI ID \`1000110460\` and was marked unsupported; use properly granted \`content://\` URIs, real Files-app sharing and synthetic intents as separate test cases. Check \`DISPLAY_NAME\`, MIME type, size and metadata-projection fallbacks. Do not call it an app defect until the test harness is ruled out. Add a regression test for the proven cause and verify \`ACTION_SEND\` and \`ACTION_SEND_MULTIPLE\`.
+17. [ ] **Resolve MediaStore/share filename handling.** Reproduce the shared MP3 that displayed numeric URI ID `1000110460` and was marked unsupported; use properly granted `content://` URIs, real Files-app sharing and synthetic intents as separate test cases. Check `DISPLAY_NAME`, MIME type, size and metadata-projection fallbacks. Do not call it an app defect until the test harness is ruled out. Add a regression test for the proven cause and verify `ACTION_SEND` and `ACTION_SEND_MULTIPLE`.
 
 18. [ ] **Physically validate RUIZU indexing and playback.** After safe system eject, demonstrate player playback of a full copied music album, a podcast, a converted MP3, nested folders, Unicode filenames and an exported M3U playlist. Test correct order, audio quality and supported formats. A byte-identical file on USB proves transfer integrity **not** that the RUIZU plays or indexes it.
 
-19. [ ] **Test failure handling and recovery without sacrificing original files.** Cover unplug during active copy, unplug during SHA-256 verification, cancellation, failed cleanup, storage exhaustion, cable/provider I/O failure, revoked access, app process death and retries. Confirm no pre-existing songs, playlists or \`.LIB\` databases are removed, existing files remain playable, and partial temporary outputs are either safely cleaned or transparently reported. Test the FAT32 file-size limit and large-file behaviour. Reuse the journalled verified writer, not a second transfer engine.
+19. [ ] **Test failure handling and recovery without sacrificing original files.** Cover unplug during active copy, unplug during SHA-256 verification, cancellation, failed cleanup, storage exhaustion, cable/provider I/O failure, revoked access, app process death and retries. Confirm no pre-existing songs, playlists or `.LIB` databases are removed, existing files remain playable, and partial temporary outputs are either safely cleaned or transparently reported. Test the FAT32 file-size limit and large-file behaviour. Reuse the journalled verified writer, not a second transfer engine.
 
 20. [ ] **Finish transfer history and progress validation.** Check progress/speed/ETA, foreground notification and Cancel, SHA-256 reporting, failed-only retry, persisted run history and queued/resumed work across restarts. Ensure a partial or interrupted run cannot be presented as successful; enable bounded, privacy-safe diagnostics. Cross-reference item 7.
 
 21. [ ] **Validate podcast feeds and prepared downloads.** Reproduce the earlier “Feed is larger than 5120 KB” case with a genuine large RSS/Atom feed. Verify early-stop parsing, feed redirects, subscription persistence, episode identification and duplicate avoidance, HTTPS Range resume, changed remote content, cancellation, storage limits and failed/partial files. Confirm download-to-phone while disconnected, followed by a verified player copy. Cross-reference items 3, 4 and 8.
 
-22. [ ] **Finish one safe, update-compatible signed Android release identity.** Inspect PR #18 before acting. Compare the installed Galaxy A55 APK certificate fingerprint with the release key, make the canonical package choice explicit, ensure versionCode increases and keep existing app data/SAF permissions. Run signature/manifest, emulator install/update and physical update checks. Don't create competing package identities or tell the user to bypass Play Protect. Track whether an existing \`.stable\` install needs migration, rather than silently uninstalling it.
+22. [ ] **Finish one safe, update-compatible signed Android release identity.** Use the current canonical 1.2.4 identity and the evidence above. Compare the installed Galaxy A55 APK certificate fingerprint with the release key, make the canonical package choice explicit, ensure versionCode increases and keep existing app data/SAF permissions. Run signature/manifest, emulator install/update and physical update checks. Don't create competing package identities or tell the user to bypass Play Protect. Track whether an existing `.stable` install needs migration, rather than silently uninstalling it.
 
 23. [ ] **Validate safe removal and USB lifecycle states.** Keep prominent system-eject guidance, distinguish copying, verification, cleanup pending, transfer finished, eject required and system-confirmed unmount where Android exposes it. Verify Samsung's actual eject flow on the Galaxy A55 with the RUIZU. Do not claim the app itself ejected a device merely because file I/O finished. Cross-reference item 11.
 
@@ -101,8 +135,8 @@ The original feature items 1–11 above remain the authoritative feature-specifi
 
 ### Suggested order for the next work session
 
-**First:** 12 → 13 → 14 → 16 → 17 → 18 → 19 → 22 → 27.  
-**Then:** 15, 20, 21, 23, 24 as validation permits.  
+**First:** verify the 1.2.4 upgrade (22), then real sharing (17), selection (16), inventory/comparison (13–14), safe eject/playback (23 → 18), physical recovery (19) and final release evidence (27). Item 12 is complete.
+**Then:** 15, 20, 21, 23, 24 as validation permits.
 **Later:** 25–26 after the existing workflows are reliable.
 
 ### Acceptance evidence checklist
@@ -112,7 +146,7 @@ For every numbered item, record its PR/commit, the exact tests executed and resu
 
 ## Suggested implementation order
 
-**Current priority:** run tests and validate existing features in the order **12 → 13 → 14 → 16 → 17 → 18 → 19 → 22 → 27**. Legacy feature priorities 1–11 remain for detailed acceptance but should not displace core validation. Saved folder rules (5) are a prerequisite for connection-triggered transfer suggestions (6); saved subscriptions (3) are a prerequisite for useful OPML import/export (8).
+**Current priority:** finish **22 → 17 → 16 → 13 → 14 → 23 → 18 → 19 → 27**. Item 12 is complete; rerun its tests when relevant code changes. Legacy feature priorities 1–11 remain for detailed acceptance but should not displace core validation. Saved folder rules (5) are a prerequisite for connection-triggered transfer suggestions (6); saved subscriptions (3) are a prerequisite for useful OPML import/export (8).
 
 ## Shared completion rules
 
