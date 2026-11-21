@@ -30,3 +30,7 @@ The checked entries record the existing implementation status. Topic-based recom
 ### Topic recommendation acceptance (current work)
 
 `__tests__/podcastPlayer.test.ts` exercises the actual Web Component in jsdom: topic matching, current/recent exclusion, honest fallback, preference persistence, invalid/blocked storage and unchanged current media element. Full suite: 25 suites / 158 tests. These tests do not prove publisher or Spotify playback availability.
+
+### Deployment status
+
+[PR #32](https://github.com/Parris-Tech-Services/JoshBooksOnline/pull/32) is merged (`3c1686db8bb3e95624036ac84a3b250ea796a6f5`). The complete web suite passed **158 tests in 25 suites**, plus lint/type checking, catalogue validation, both complexity gates and production build on retry. The live `josh-books-online.vercel.app/book-podcast-player.js` was checked after merge and still lacked the new topic selector. The feature remains **PARTIALLY COMPLETE** until the hosting project deploys it and live interaction is verified. The available Vercel connections did not provide access to the hosting project; browser fallback reached sign-in. Do not mark the checkbox complete from the merged code alone.
