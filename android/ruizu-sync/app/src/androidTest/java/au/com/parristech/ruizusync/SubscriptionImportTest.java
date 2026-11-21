@@ -73,6 +73,7 @@ public final class SubscriptionImportTest {
             assertEquals("existing feeds must not appear as new imports", 2, dialog.getListView().getCount());
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
         });
+        instrumentation.waitForIdleSync();
         assertEquals(1, SubscriptionStore.list(context).size());
         assertEquals("Keep my title", SubscriptionStore.list(context).get(0).title);
     }
@@ -82,6 +83,7 @@ public final class SubscriptionImportTest {
             dialog.getListView().performItemClick(dialog.getListView().getChildAt(1), 1, 1);
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
         });
+        instrumentation.waitForIdleSync();
         assertEquals(2, SubscriptionStore.list(context).size());
         assertTrue(SubscriptionStore.contains(context, "https://example.org/first?a=1&b=2"));
         assertFalse(SubscriptionStore.contains(context, "https://example.org/second"));
@@ -92,6 +94,7 @@ public final class SubscriptionImportTest {
             assertEquals(1, dialog.getListView().getCount());
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
         });
+        instrumentation.waitForIdleSync();
         assertEquals(2, SubscriptionStore.list(context).size());
     }
 }

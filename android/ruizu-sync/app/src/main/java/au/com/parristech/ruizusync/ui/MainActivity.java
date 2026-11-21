@@ -588,6 +588,13 @@ public final class MainActivity extends Activity implements TransferManager.List
     // Rendering
     // ---------------------------------------------------------------------------------------
 
+    private boolean hasReadySources() {
+        for (SourceItem item : state.sources()) {
+            if (SourceBuckets.of(item.supportedFormat(), item.problem) == SourceBuckets.Bucket.SUPPORTED) return true;
+        }
+        return false;
+    }
+
     private void renderSelections() {
         List<SourceItem> sources = state.sources();
         int supported = 0;
@@ -679,7 +686,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
 
         boolean running = manager.isRunning();
-        startButton.setEnabled(!running && !busy && supported > 0 && dest != null);
+        startButton.setEnabled(!running && !busy && hasReadySources() && dest != null);
         cancelButton.setEnabled(running);
         addFilesButton.setEnabled(!busy);
         addFolderButton.setEnabled(!busy);
@@ -784,7 +791,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
 
         boolean running = manager.isRunning();
-        startButton.setEnabled(!running && !busy && !state.sources().isEmpty() && state.destinationTree() != null);
+        startButton.setEnabled(!running && !busy && hasReadySources() && state.destinationTree() != null);
         cancelButton.setEnabled(running);
         if (retryButton != null) {
             retryButton.setEnabled(!running && snapshot.isFinished() && !manager.failedSources().isEmpty());
