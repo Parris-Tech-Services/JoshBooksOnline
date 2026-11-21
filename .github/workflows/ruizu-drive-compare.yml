@@ -29,3 +29,15 @@ jobs:
       - name: Run unit tests (no personal Drive data)
         working-directory: tools/ruizu-drive-compare
         run: python -m unittest discover -s . -p 'test_*.py' -v
+
+  offline-browser-tests:
+    name: Offline browser comparison tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: No private catalogues or network required
+        run: node --test tools/ruizu-drive-compare/test_offline_review.mjs
