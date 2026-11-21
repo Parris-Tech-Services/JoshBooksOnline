@@ -164,3 +164,12 @@ player. Confirm on the phone + player:
 - Application ID / namespace: `au.com.parristech.ruizusync`
 - minSdk 26 (Android 8.0), targetSdk 35 (edge-to-edge insets handled)
 - No AndroidX dependencies; framework widgets only (~110 KB APK)
+
+## 1.2.6: subscription import and sharing
+
+- OPML import now previews new feeds before saving. Untick feeds you do not want, then choose **Import selected**. **Cancel** leaves saved subscriptions unchanged. Existing subscriptions are not replaced.
+- XML entities and Unicode titles/URLs round-trip correctly. Imports are limited to 8 MiB of input and 1,000 unique feeds; malformed XML, external declarations, invalid feed URL schemes and embedded passwords are rejected before saving.
+- Both single-file and multiple-file shares have emulator regression coverage across separate Android UIDs.
+- Files with a recorded problem are excluded from ready counts. Start remains disabled when no selected file can be copied, including after progress-state renders.
+
+VersionCode 10 retains the existing canonical package and release certificate. The signed APK, exact hashes and test evidence are recorded in [the current backlog evidence](TODO.md#latest-implementation-evidence-126). Physical phone upgrade, Drive-to-USB transfer, eject and player playback remain separate acceptance checks.
