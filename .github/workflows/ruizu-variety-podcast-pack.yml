@@ -1,0 +1,45 @@
+name: RUIZU 20-variety private podcast bundle
+
+on:
+  push:
+    branches:
+      - feature/ruizu-20-variety-podcasts
+    paths:
+      - 'tools/ruizu-podcast-pack/**'
+      - '.github/workflows/ruizu-variety-podcast-pack.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install and verify MP3 audio codecs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version
+          ffprobe -version
+      - name: Build 20 diverse real podcast episodes for personal offline listening
+        run: python -u tools/ruizu-podcast-pack/build_pack.py /tmp/ruizu-pack
+      - name: Upload episode ZIP and verification reports (temporary private listening copy)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RUIZU-20-Different-Podcasts-2026-11-21
+          path: |
+            /tmp/ruizu-pack/RUIZU-20-Different-Podcasts-2026-11-21.zip
+            /tmp/ruizu-pack/EPISODE_INDEX.json
+            /tmp/ruizu-pack/START_HERE.txt
+            /tmp/ruizu-pack/SHA256SUMS.txt
+          retention-days: 1
+          if-no-files-found: error
