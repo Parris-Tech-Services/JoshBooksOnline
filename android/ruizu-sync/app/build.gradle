@@ -12,8 +12,8 @@ android {
         // versionCode must increase for every published build: Android only performs an
         // in-place update (keeping app data and persisted SAF permissions) when the new
         // APK has the same package, the same signing certificate and a higher versionCode.
-        versionCode 6
-        versionName '1.2.2'
+        versionCode 7
+        versionName '1.2.3'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
