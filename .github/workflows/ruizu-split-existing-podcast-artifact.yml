@@ -1,0 +1,86 @@
+name: RUIZU temporarily split finished podcast ZIP
+
+on:
+  push:
+    branches: [tools/ruizu-split-final-podcast-artifact]
+    paths:
+      - '.github/workflows/ruizu-split-existing-podcast-artifact.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified prior podcast ZIP artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/source /tmp/chunks
+          gh run download 44893457334 -R "$GITHUB_REPOSITORY" --name RUIZU-20-Different-Podcasts-2026-11-21 --dir /tmp/source
+          test -s /tmp/source/RUIZU-20-Different-Podcasts-2026-11-21.zip
+          unzip -t /tmp/source/RUIZU-20-Different-Podcasts-2026-11-21.zip
+          sha256sum /tmp/source/RUIZU-20-Different-Podcasts-2026-11-21.zip | tee /tmp/chunks/FULL_ZIP_SHA256.txt
+          split -b 45000000 -d -a 2 /tmp/source/RUIZU-20-Different-Podcasts-2026-11-21.zip /tmp/chunks/part-
+          ls -lah /tmp/chunks
+      - name: Upload part 00 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-00
+          path: /tmp/chunks/part-00
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload part 01 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-01
+          path: /tmp/chunks/part-01
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload part 02 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-02
+          path: /tmp/chunks/part-02
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload part 03 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-03
+          path: /tmp/chunks/part-03
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload part 04 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-04
+          path: /tmp/chunks/part-04
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload part 05 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-05
+          path: /tmp/chunks/part-05
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload part 06 of 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-podcast-part-06
+          path: /tmp/chunks/part-06
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload complete checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-complete-zip-sha256
+          path: /tmp/chunks/FULL_ZIP_SHA256.txt
+          retention-days: 1
+          if-no-files-found: error
