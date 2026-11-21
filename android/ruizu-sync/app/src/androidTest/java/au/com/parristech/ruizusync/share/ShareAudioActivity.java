@@ -14,15 +14,17 @@ public final class ShareAudioActivity extends Activity {
         ArrayList<Uri> audio = new ArrayList<>();
         String base = "content://" + getPackageName() + ".sharedaudio/audio/";
         audio.add(Uri.parse(base + "101"));
-        audio.add(Uri.parse(base + "102"));
+        boolean single = getIntent().getBooleanExtra("single", false);
+        if (!single) audio.add(Uri.parse(base + "102"));
         ClipData clip = ClipData.newRawUri("Audio fixture", audio.get(0));
-        clip.addItem(new ClipData.Item(audio.get(1)));
-        Intent share = new Intent(Intent.ACTION_SEND_MULTIPLE)
+        if (!single) clip.addItem(new ClipData.Item(audio.get(1)));
+        Intent share = new Intent(single ? Intent.ACTION_SEND : Intent.ACTION_SEND_MULTIPLE)
                 .setClassName(getIntent().getStringExtra("targetPackage"),
                         "au.com.parristech.ruizusync.ui.MainActivity")
                 .setType("audio/mpeg")
                 .putParcelableArrayListExtra(Intent.EXTRA_STREAM, audio)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (single) share.putExtra(Intent.EXTRA_STREAM, audio.get(0));
         share.setClipData(clip);
         startActivity(share);
         finish();

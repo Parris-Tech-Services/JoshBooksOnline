@@ -25,14 +25,15 @@ public final class SourceBuckets {
 
     /**
      * @param supportedFormat the item's name resolves to a supported audio format
-     * @param problem         the item's transfer problem, or null/blank when there is none
+     * @param problem         the item's transfer problem, or null/empty when there is none
      */
     public static Bucket of(boolean supportedFormat, String problem) {
+        // Match TransferManager: a reported problem blocks even a recognised MP3.
+        if (problem != null && !problem.isEmpty()) {
+            return Bucket.UNREADABLE;
+        }
         if (supportedFormat) {
             return Bucket.SUPPORTED;
-        }
-        if (problem != null && !problem.trim().isEmpty()) {
-            return Bucket.UNREADABLE;
         }
         return Bucket.UNSUPPORTED_FORMAT;
     }

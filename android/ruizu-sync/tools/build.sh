@@ -14,8 +14,8 @@ KS_PASS="ruizu123"
 
 MIN_SDK=26
 TARGET_SDK=35
-VERSION_CODE=9
-VERSION_NAME="1.2.5"
+VERSION_CODE=10
+VERSION_NAME="1.2.6"
 
 [ -f "$SDK" ] || { echo "Missing framework stubs at $SDK (run tools/fetch-sdk.sh)" >&2; exit 1; }
 [ -f "$R8_JAR" ] || { echo "Missing R8 at $R8_JAR (run tools/fetch-sdk.sh)" >&2; exit 1; }

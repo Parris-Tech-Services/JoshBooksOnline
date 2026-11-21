@@ -201,11 +201,11 @@ public final class CoreTests {
     private static void sourceBuckets() {
         checkEquals("supported audio is supported", SourceBuckets.Bucket.SUPPORTED,
                 SourceBuckets.of(true, null));
-        checkEquals("supported audio ignores a stale problem", SourceBuckets.Bucket.SUPPORTED,
+        checkEquals("known problem blocks supported audio", SourceBuckets.Bucket.UNREADABLE,
                 SourceBuckets.of(true, "leftover"));
         checkEquals("unknown extension is an unsupported format",
                 SourceBuckets.Bucket.UNSUPPORTED_FORMAT, SourceBuckets.of(false, null));
-        checkEquals("blank problem is not a problem", SourceBuckets.Bucket.UNSUPPORTED_FORMAT,
+        checkEquals("nonempty problem matches transfer engine", SourceBuckets.Bucket.UNREADABLE,
                 SourceBuckets.of(false, "   "));
         checkEquals("a stated problem is unreadable, not unsupported",
                 SourceBuckets.Bucket.UNREADABLE,
