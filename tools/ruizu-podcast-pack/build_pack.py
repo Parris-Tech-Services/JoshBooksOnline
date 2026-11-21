@@ -91,10 +91,16 @@ def resolve_feed(query, expected):
         if not u.startswith(('http://','https://')):continue
         label=x.get('collectionName') or ''
         score=title_sim(expected,label)
-        # Require a significant title overlap: never silently fetch a different show.
-        if score>=0.55: matches.append((score,len(label),u,label))
-    if not matches: raise ValueError(f'No matching public feed: {expected} (query={query})')
-    matches.sort(reverse=True)
+        # High recall on the SHOW title, high precision to reject unrelated programmes
+        # merely mentioning it, e.g. '... and the rest is FILM history' or
+        # 'Darknet Diaries en espanol' when the English podcast was requested.
+        expected_tokens=set(norm(expected).split())-{'the','podcast','with','and','a','of','show'}
+        label_tokens=set(norm(label).split())-{'the','podcast','with','and','a','of','show'}
+        precision=len(expected_tokens&label_tokens)/max(1,len(label_tokens))
+        if score>=0.8 and precision>=0.79:
+            matches.append((score, precision, u, label))
+    if not matches: raise ValueError(f'No sufficiently exact public feed: {expected} (query={query})')
+    matches.sort(key=lambda x: (-x[0], -x[1], len(x[3])))
     return matches[0][2],matches[0][3]
 
 
@@ -104,7 +110,7 @@ def feed_episodes(feed_url):
     eps=[]
     for elem in root.findall('.//item')[:100]:
         title=(elem.findtext('title') or 'Untitled').strip()
-        if any(x in norm(title) for x in ('trailer','bonus subscription','ad free preview','subscription only')):continue
+        if any(x in norm(title) for x in ('trailer','bonus subscription','ad free preview','subscription only','premium preview')):continue
         encs=elem.findall('enclosure')
         encs+=[x for x in elem if x.tag.endswith('}enclosure')]
         for e in encs:
