@@ -39,6 +39,11 @@ public final class CrossAppAudioShareTest {
                 target.checkSelfPermission("android.permission.READ_MEDIA_AUDIO"));
         Uri unshared = Uri.parse("content://" + sender.getPackageName()
                 + ".sharedaudio/audio/103");
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            // Avoid leaving a notification dialog for the next activity test.
+            instrumentation.getUiAutomation().grantRuntimePermission(
+                    target.getPackageName(), "android.permission.POST_NOTIFICATIONS");
+        }
         AppState.get().clearSources();
         Activity receiver = instrumentation.startActivitySync(
                 new Intent(target, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
@@ -73,7 +78,8 @@ public final class CrossAppAudioShareTest {
                 // Per-file grants are effective; no provider-wide permission was added.
             }
         } finally {
-            instrumentation.runOnMainSync(receiver::finish);
+            instrumentation.runOnMainSync(receiver::finishAndRemoveTask);
+            instrumentation.waitForIdleSync();
             AppState.get().clearSources();
         }
     }
