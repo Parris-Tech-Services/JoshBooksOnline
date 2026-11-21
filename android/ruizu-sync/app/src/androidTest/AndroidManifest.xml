@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- These components live in the test APK, under a different UID from RUIZU. -->
+    <application>
+        <provider
+            android:name="au.com.parristech.ruizusync.share.SharedAudioProvider"
+            android:authorities="${applicationId}.sharedaudio"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <activity
+            android:name="au.com.parristech.ruizusync.share.ShareAudioActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>
