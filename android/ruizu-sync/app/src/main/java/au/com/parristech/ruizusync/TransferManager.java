@@ -277,6 +277,13 @@ public final class TransferManager {
             if (request.destTree == null) {
                 throw new IllegalArgumentException("No player folder selected");
             }
+            if (request.duplicateMode == null || !request.duplicateMode.supported()) {
+                // Existing player audio is never deleted or replaced. Reject rather than
+                // silently ignoring the request, so no caller can believe it overwrote.
+                throw new IllegalArgumentException(
+                        "Overwriting player audio is not supported: existing files are never "
+                                + "replaced (" + request.duplicateMode + ")");
+            }
             running = true;
             cancelRequested = false;
             errorText = null;

@@ -291,15 +291,18 @@ public final class MainActivity extends Activity implements TransferManager.List
 
         optionsCard.addView(label("Duplicates", 13, true));
         duplicateSpinner = new Spinner(this);
+        // Only supported modes are offered: overwriting player audio is never allowed, so
+        // OVERWRITE stays out of the list and any legacy saved value is migrated by AppState.
+        final java.util.List<DuplicateMode> duplicateModes = DuplicateMode.selectable();
         ArrayAdapter<DuplicateMode> duplicateAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, DuplicateMode.values());
+                android.R.layout.simple_spinner_item, duplicateModes);
         duplicateAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         duplicateSpinner.setAdapter(duplicateAdapter);
-        duplicateSpinner.setSelection(state.duplicateMode().ordinal());
+        duplicateSpinner.setSelection(Math.max(0, duplicateModes.indexOf(state.duplicateMode())));
         duplicateSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                state.setDuplicateMode(DuplicateMode.values()[position]);
+                state.setDuplicateMode(duplicateModes.get(position));
             }
 
             @Override

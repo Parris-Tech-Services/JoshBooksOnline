@@ -120,8 +120,9 @@ public final class PendingTransferStore {
             android.net.Uri dest = android.net.Uri.parse(root.getString("dest"));
             FolderPlanner.OrganiseMode organise = FolderPlanner.OrganiseMode.valueOf(
                     root.optString("organise", FolderPlanner.OrganiseMode.FLAT.name()));
-            DuplicateMode duplicates = DuplicateMode.valueOf(
-                    root.optString("duplicates", DuplicateMode.SKIP_FAST.name()));
+            DuplicateMode duplicates = DuplicateMode.fromStoredName(
+                    root.optString("duplicates", DuplicateMode.SKIP_FAST.name()),
+                    DuplicateMode.SKIP_EXACT);
             TransferManager.Request request = new TransferManager.Request(
                     sources, dest, organise, duplicates,
                     root.optBoolean("verify", true),
