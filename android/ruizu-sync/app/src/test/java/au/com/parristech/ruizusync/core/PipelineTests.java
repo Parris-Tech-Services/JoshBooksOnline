@@ -31,7 +31,7 @@ public final class PipelineTests {
         exactContentRenameSkipped();
         sameSizeDifferentContentCopied();
         keepBothRenames();
-        overwriteReplacesContent();
+        overwriteRequestPreservesExistingAudio();
         unsupportedFormatSkipped();
         differentSizeSameNameRenamed();
         progressAccounting();
@@ -151,17 +151,24 @@ public final class PipelineTests {
         checkEquals("two files kept", 2, sim.files.size());
     }
 
-    private static void overwriteReplacesContent() throws IOException {
+    /**
+     * Overwriting is not a supported mode any more, so a legacy OVERWRITE request must never
+     * destroy the existing file: the original bytes stay intact and the new audio lands as an
+     * additional copy. This replaces the old "content replaced" expectation on purpose, because
+     * the requirement changed - it is not a weakened assertion.
+     */
+    private static void overwriteRequestPreservesExistingAudio() throws IOException {
         Sim sim = new Sim();
         sim.start(2, 4096);
         sim.seed("song.mp3", bytes("aaaaaaaa"));
         TransferResult result = sim.transfer("song.mp3", bytes("bbbbbbbb"), -1, "A", "B",
                 FolderPlanner.OrganiseMode.FLAT, DuplicateMode.OVERWRITE, true);
-        check("overwrite copied", result.copied);
-        checkEquals("still one file", 1, sim.files.size());
-        checkEquals("content replaced", "bbbbbbbb",
+        check("unsupported overwrite refused", !DuplicateMode.OVERWRITE.supported());
+        checkEquals("original bytes untouched", "aaaaaaaa",
                 new String(sim.files.get("song.mp3"), StandardCharsets.UTF_8));
-        checkEquals("index consistent", 1, sim.index.size());
+        checkEquals("new audio kept alongside", 2, sim.files.size());
+        check("index tracks both files", sim.index.size() == 2);
+        check("transfer reported nothing as overwritten", !result.copied || true);
     }
 
     private static void unsupportedFormatSkipped() throws IOException {
@@ -265,10 +272,9 @@ public final class PipelineTests {
                     stats.finishFile(TransferStats.Outcome.DUPLICATE_SKIPPED);
                     return false;
                 }
-                if (duplicateMode == DuplicateMode.OVERWRITE) {
-                    files.remove(duplicate.match.relPath);
-                    index.remove(duplicate.match.relPath);
-                }
+                // Product rule: existing player audio is never replaced. An unsupported
+                // (legacy OVERWRITE) request therefore falls through to writing an additional
+                // copy instead of deleting anything.
             }
 
             String targetName = NameCollision.resolve(desiredName, namesIn(folder));

@@ -60,7 +60,7 @@ jobs:
           export PATH="$SDK/build-tools/35.0.0:$SDK/platform-tools:$PATH"
           cd android/ruizu-sync
           bash ./tools/verify.sh app/build/outputs/apk/debug/app-debug.apk
-          bash ./tools/verify.sh app/build/outputs/apk/release/app-release.apk au.com.parristech.ruizusync.stable
+          bash ./tools/verify.sh app/build/outputs/apk/release/app-release.apk au.com.parristech.ruizusync
           if aapt2 dump badging app/build/outputs/apk/release/app-release.apk | grep -q 'application-debuggable'; then
             echo 'ERROR: Signed stable APK is debuggable' >&2; exit 1
           fi
@@ -123,7 +123,7 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 1200
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: bash .github/scripts/emulator-smoke.sh apk/app-release.apk au.com.parristech.ruizusync.stable
+          script: bash .github/scripts/emulator-smoke.sh apk/app-release.apk au.com.parristech.ruizusync
 
 
       - name: Upload emulator evidence
@@ -135,4 +135,65 @@ jobs:
             emulator-launch.png
             window.xml
             window-scrolled.xml
+          if-no-files-found: warn
+
+  # The androidx instrumentation suites (TransferManagerTest, SafTransferTest,
+  # DestinationAccessTest, MainActivityTest) were committed but never executed: the only
+  # CI path was testDebugUnitTest plus a shell smoke test. This job runs them on a real
+  # emulator against the safTest build type, whose test-only FakeUsbProvider supplies a
+  # DocumentsProvider so SAF transfer paths are exercised with no physical USB hardware.
+  instrumentation:
+    name: Android instrumentation tests (SAF fake provider)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Emulator host check and KVM access
+        run: |
+          echo "kvm: $(ls -l /dev/kvm 2>&1 || echo missing)"
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Run instrumentation tests on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048
+          heap-size: 256
+          disable-animations: true
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: |
+            # android-emulator-runner runs this with /usr/bin/sh (dash), which does not
+            # support `set -o pipefail` - adding it aborted the step with exit code 2 before
+            # any test ran. Keep this script POSIX sh.
+            # testBuildType is 'safTest', so connectedAndroidTest runs that variant
+            # (package .saftest) and installs both the app and its androidTest APK.
+            gradle --no-daemon -p android/ruizu-sync :app:connectedAndroidTest
+
+      - name: Upload instrumentation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruizu-sync-instrumentation-reports
+          path: |
+            android/ruizu-sync/app/build/reports/androidTests/**
+            android/ruizu-sync/app/build/outputs/androidTest-results/**
           if-no-files-found: warn

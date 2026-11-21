@@ -1,0 +1,43 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'au.com.parristech.playback'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'au.com.parristech.playback'
+        minSdk 26
+        // targetSdk 34: avoids the Android 15 edge-to-edge insets work for this small tool.
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    // Same project release key as RUIZU Sync, injected only by CI secrets.
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv('RELEASE_KEYSTORE')
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('RELEASE_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('RELEASE_KEY_ALIAS')
+                keyPassword System.getenv('RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            debuggable false
+            if (System.getenv('RELEASE_KEYSTORE')) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

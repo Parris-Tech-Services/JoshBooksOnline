@@ -576,6 +576,19 @@ public final class CoreTests {
         check("overwrite not skip", !DuplicateMode.OVERWRITE.skips());
         check("keep both not skip", !DuplicateMode.KEEP_BOTH.skips());
         check("label stable", DuplicateMode.OVERWRITE.label.contains("Overwrite"));
+        check("overwrite unsupported", !DuplicateMode.OVERWRITE.supported());
+        check("keep both supported", DuplicateMode.KEEP_BOTH.supported());
+        check("selectable hides overwrite", !DuplicateMode.selectable().contains(DuplicateMode.OVERWRITE));
+        checkEquals("selectable count", 3, DuplicateMode.selectable().size());
+        checkEquals("legacy overwrite migrates to exact skip", DuplicateMode.SKIP_EXACT,
+                DuplicateMode.safe(DuplicateMode.OVERWRITE));
+        checkEquals("null migrates to exact skip", DuplicateMode.SKIP_EXACT, DuplicateMode.safe(null));
+        checkEquals("supported mode preserved", DuplicateMode.KEEP_BOTH,
+                DuplicateMode.safe(DuplicateMode.KEEP_BOTH));
+        checkEquals("stored legacy name migrates", DuplicateMode.SKIP_EXACT,
+                DuplicateMode.fromStoredName("OVERWRITE", DuplicateMode.SKIP_FAST));
+        checkEquals("unknown stored name falls back", DuplicateMode.SKIP_FAST,
+                DuplicateMode.fromStoredName("WHATEVER", DuplicateMode.SKIP_FAST));
     }
 
     // ---- tiny assertion helpers -----------------------------------------------------------

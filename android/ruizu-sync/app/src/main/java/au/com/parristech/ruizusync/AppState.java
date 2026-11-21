@@ -101,7 +101,9 @@ public final class AppState {
     }
 
     public synchronized void setDuplicateMode(DuplicateMode mode) {
-        duplicateMode = mode == null ? DuplicateMode.SKIP_FAST : mode;
+        // Overwriting is not permitted, so a legacy OVERWRITE selection migrates to a safe mode
+        // instead of leaving the UI on an option the transfer engine will refuse.
+        duplicateMode = DuplicateMode.safe(mode);
     }
 
     public synchronized boolean verifyAfterCopy() {
