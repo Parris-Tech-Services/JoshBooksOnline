@@ -48,6 +48,7 @@ import au.com.parristech.ruizusync.TransferUtils;
 import au.com.parristech.ruizusync.TransferManager;
 import au.com.parristech.ruizusync.TransferService;
 import au.com.parristech.ruizusync.core.ByteFormat;
+import au.com.parristech.ruizusync.core.SourceBuckets;
 import au.com.parristech.ruizusync.core.DestEntry;
 import au.com.parristech.ruizusync.core.LibraryComparison;
 import au.com.parristech.ruizusync.core.DuplicateMode;
@@ -591,13 +592,22 @@ public final class MainActivity extends Activity implements TransferManager.List
         List<SourceItem> sources = state.sources();
         int supported = 0;
         int unsupported = 0;
+        int unreadable = 0;
         int rebuilt = 0;
         long knownBytes = 0;
         for (SourceItem item : sources) {
-            if (item.supportedFormat()) {
-                supported++;
-            } else {
-                unsupported++;
+            switch (SourceBuckets.of(item.supportedFormat(), item.problem)) {
+                case SUPPORTED:
+                    supported++;
+                    break;
+                case UNREADABLE:
+                    // The file itself may be a perfectly good MP3; we simply could not read what
+                    // it is. Reporting that as an "unsupported format" was the confusing part.
+                    unreadable++;
+                    break;
+                default:
+                    unsupported++;
+                    break;
             }
             if (item.nameReconstructed) {
                 rebuilt++;
@@ -618,6 +628,10 @@ public final class MainActivity extends Activity implements TransferManager.List
             if (unsupported > 0) {
                 sb.append("\n").append(unsupported).append(unsupported == 1 ? " file" : " files")
                         .append(" in an unsupported format will be skipped");
+            }
+            if (unreadable > 0) {
+                sb.append("\n").append(unreadable).append(unreadable == 1 ? " file could" : " files could")
+                        .append(" not be identified and will be skipped");
             }
             if (rebuilt > 0) {
                 sb.append("\n").append(rebuilt).append(rebuilt == 1 ? " file arrived" : " files arrived")
