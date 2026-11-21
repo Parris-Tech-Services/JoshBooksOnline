@@ -51,6 +51,24 @@ SHOWS = [
   ('Philosophy & practical wisdom', [('Philosophize This!','Philosophize This'),('The Daily Stoic','The Daily Stoic')]),
   ('Bonus - kids storytime', [('Story Pirates','Story Pirates'),('Little Stories for Tiny People','Little Stories for Tiny People')]),
   ('Bonus - mindful living', [('Ten Percent Happier with Dan Harris','Ten Percent Happier'),('The Mindful Minute','The Mindful Minute')]),
+  ('Psychology & behaviour', [('Hidden Brain','Hidden Brain'),('You Are Not So Smart','You Are Not So Smart')]),
+  ('Books & reading', [('Overdue','Overdue'),('The New Yorker: Fiction Podcast','The New Yorker Fiction Podcast')]),
+  ('Food & curious cooking', [('The Sporkful','The Sporkful'),('Home Cooking','Home Cooking')]),
+  ('Christianity & contemporary culture', [('The Holy Post','The Holy Post'),('Unbelievable?','Unbelievable')]),
+  ('Wildlife & natural world', [('The Science of Birds','The Science of Birds'),('The Wild with Chris Morgan','The Wild')]),
+  ('Education & teaching', [('Cult of Pedagogy','Cult of Pedagogy'),('Teaching in Higher Ed','Teaching in Higher Ed')]),
+  ('Film & cinema', [('The Rewatchables','The Rewatchables'),('The Big Picture','The Big Picture')]),
+  ('Technology & human stories', [('Decoder with Nilay Patel','Decoder'),('Waveform: The MKBHD Podcast','Waveform')]),
+  ('Video games & gaming culture', [('The Besties','The Besties'),('Triple Click','Triple Click')]),
+  ('Mathematics & puzzles', [('The Numberphile Podcast','The Numberphile Podcast'),('The Joy of Why','The Joy of Why')]),
+  ('Medical myths & evidence', [('Maintenance Phase','Maintenance Phase'),('The Drive with Peter Attia','The Drive')]),
+  ('Australian comedy', [('TOFOP','TOFOP'),('The Little Dum Dum Club','The Little Dum Dum Club')]),
+  ('Deep interviews', [('The Ezra Klein Show','The Ezra Klein Show'),('On Being with Krista Tippett','On Being')]),
+  ('Independent pop culture', [('Switched on Pop','Switched on Pop'),('KEXP Song of the Day','KEXP Song of the Day')]),
+  ('True-crime storytelling', [('Criminal','Criminal'),('Casefile True Crime','Casefile')]),
+  ('Sustainable living & environment', [('Outside/In','Outside/In'),('Climate One','Climate One')]),
+  ('Creative practice', [('Creative Pep Talk','Creative Pep Talk'),('The Writer Files','The Writer Files')]),
+  ('Unusual science & research', [('Every Little Thing','Every Little Thing'),('The Weirdest Thing I Learned This Week','The Weirdest Thing I Learned This Week')]),
 ]
 
 
@@ -215,16 +233,24 @@ def main():
     out.mkdir(exist_ok=True)
     work=root/'.working';work.mkdir(exist_ok=True)
     records=[]
-    # Run independent feeds concurrently to avoid waiting sequentially on slow hosts.
-    # Slots 21/22 are backups if a publisher feed is inaccessible.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        jobs=[(i,pool.submit(choose_slot,i,cat,opts,work,out)) for i,(cat,opts) in enumerate(SHOWS,1)]
-        for i,fut in jobs:
-            try:
-                rec=fut.result()
-                if rec:records.append(rec)
-            except Exception as e: print(f'UNEXPECTED SLOT FAILURE {i}: {e}',flush=True)
-    records=records[:MAX_EPISODES]
+    # Download six different programmes in parallel per wave, stop after 20 successes.
+    # Extra categories are fallbacks, not extra files in the final ZIP.
+    for start in range(0,len(SHOWS),6):
+        if len(records)>=MAX_EPISODES:break
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            jobs=[(i,pool.submit(choose_slot,i,cat,opts,work,out))
+                  for i,(cat,opts) in ((j+1,SHOWS[j]) for j in range(start,min(start+6,len(SHOWS))))]
+            for i,fut in jobs:
+                try:
+                    rec=fut.result()
+                    if rec: records.append(rec)
+                except Exception as e: print(f'UNEXPECTED SLOT FAILURE {i}: {e}',flush=True)
+    unique=[]; seen_shows=set()
+    for rec in records:
+        key=norm(rec['podcast'])
+        if key in seen_shows:continue
+        seen_shows.add(key);unique.append(rec)
+    records=unique[:MAX_EPISODES]
     # Stable 01..20 numbers regardless of skipped slots.
     for n,rec in enumerate(records,1):
         old=out/rec['filename']
