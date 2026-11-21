@@ -3,7 +3,6 @@ package au.com.parristech.ruizusync.core;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -12,9 +11,9 @@ import java.util.regex.Pattern;
  */
 public final class Opml {
 
-    private static final Pattern OUTLINE_TAG = Pattern.compile("<outline\\b[^>]*>", Pattern.CASE_INSENSITIVE);
-    private static final Pattern ATTRIBUTE =
-            Pattern.compile("(?i)(?<![\\w-])([a-z:]+)\\s*=\\s*(\"([^\"]*)\"|'([^']*)')");
+    public static final int MAX_CHARACTERS = 8 * 1024 * 1024;
+    public static final int MAX_FEEDS = 1000;
+    private static final Pattern DECLARATION = Pattern.compile("<!\\s*(DOCTYPE|ENTITY)\\b", Pattern.CASE_INSENSITIVE);
 
     public static final class Feed {
         public final String title;
@@ -34,26 +33,63 @@ public final class Opml {
     private Opml() {
     }
 
-    /** Parses every {@code <outline ... xmlUrl="...">} entry; ignores other outlines. */
+    /** Parse a bounded OPML document before any subscription is saved. */
     public static List<Feed> parse(String xml) {
-        List<Feed> feeds = new ArrayList<>();
-        if (xml == null || xml.isEmpty()) {
-            return feeds;
+        if (xml == null) return new ArrayList<>();
+        if (xml.length() > MAX_CHARACTERS) throw new IllegalArgumentException("OPML file is too large");
+        if (xml.trim().isEmpty()) return new ArrayList<>();
+        // Reject declarations before parsing on both Android and the JVM. The resolver below is
+        // defence in depth; no external entities, DTDs or private file reads are needed for OPML.
+        if (DECLARATION.matcher(xml).find()) {
+            throw new IllegalArgumentException("OPML must not contain DTD or entity declarations");
         }
-        Matcher matcher = OUTLINE_TAG.matcher(xml);
-        while (matcher.find()) {
-            String tag = matcher.group();
-            String url = attribute(tag, "xmlUrl");
-            if (url == null || url.trim().isEmpty()) {
-                continue;
+        try {
+            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setValidating(false);
+            factory.setExpandEntityReferences(false);
+            javax.xml.parsers.DocumentBuilder builder = factory.newDocumentBuilder();
+            builder.setEntityResolver((publicId, systemId) -> {
+                throw new org.xml.sax.SAXException("External XML resources are not allowed");
+            });
+            builder.setErrorHandler(new org.xml.sax.helpers.DefaultHandler() {
+                @Override public void error(org.xml.sax.SAXParseException error) throws org.xml.sax.SAXException { throw error; }
+                @Override public void fatalError(org.xml.sax.SAXParseException error) throws org.xml.sax.SAXException { throw error; }
+            });
+            org.w3c.dom.Document document = builder.parse(new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+            if (!"opml".equals(document.getDocumentElement().getTagName())) {
+                throw new IllegalArgumentException("Choose an OPML subscription file");
             }
-            String title = attribute(tag, "title");
-            if (title == null) {
-                title = attribute(tag, "text");
+            java.util.LinkedHashMap<String, Feed> unique = new java.util.LinkedHashMap<>();
+            org.w3c.dom.NodeList outlines = document.getElementsByTagName("outline");
+            for (int i = 0; i < outlines.getLength(); i++) {
+                org.w3c.dom.Element outline = (org.w3c.dom.Element) outlines.item(i);
+                String url = outline.getAttribute("xmlUrl").trim();
+                if (url.isEmpty()) continue;
+                validateUrl(url);
+                String title = outline.getAttribute("title");
+                if (title.trim().isEmpty()) title = outline.getAttribute("text");
+                unique.putIfAbsent(url, new Feed(title, url));
+                if (unique.size() > MAX_FEEDS) throw new IllegalArgumentException("OPML contains too many feeds (maximum 1000)");
             }
-            feeds.add(new Feed(title, url));
+            return new ArrayList<>(unique.values());
+        } catch (IllegalArgumentException error) {
+            throw error;
+        } catch (Exception error) {
+            // Parser messages may contain private feed URLs or document fragments.
+            throw new IllegalArgumentException("The OPML file is malformed or cannot be read");
         }
-        return feeds;
+    }
+
+    private static void validateUrl(String url) {
+        try {
+            java.net.URI uri = new java.net.URI(url);
+            if (!("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
+                    || uri.getHost() == null || uri.getUserInfo() != null) {
+                throw new IllegalArgumentException("OPML feeds must use HTTP or HTTPS URLs without embedded passwords");
+            }
+        } catch (java.net.URISyntaxException error) {
+            throw new IllegalArgumentException("OPML contains an invalid feed URL");
+        }
     }
 
     public static String generate(List<Feed> feeds) {
@@ -75,16 +111,6 @@ public final class Opml {
         sb.append("  </body>\n");
         sb.append("</opml>\n");
         return sb.toString();
-    }
-
-    private static String attribute(String tag, String name) {
-        Matcher matcher = ATTRIBUTE.matcher(tag);
-        while (matcher.find()) {
-            if (matcher.group(1).equalsIgnoreCase(name)) {
-                return matcher.group(3) != null ? matcher.group(3) : matcher.group(4);
-            }
-        }
-        return null;
     }
 
     private static String escape(String value) {

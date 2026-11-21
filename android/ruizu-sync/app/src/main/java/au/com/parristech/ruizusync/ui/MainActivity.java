@@ -591,10 +591,13 @@ public final class MainActivity extends Activity implements TransferManager.List
         List<SourceItem> sources = state.sources();
         int supported = 0;
         int unsupported = 0;
+        int unavailable = 0;
         int rebuilt = 0;
         long knownBytes = 0;
         for (SourceItem item : sources) {
-            if (item.supportedFormat()) {
+            if (item.problem != null) {
+                unavailable++;
+            } else if (item.supportedFormat()) {
                 supported++;
             } else {
                 unsupported++;
@@ -619,6 +622,9 @@ public final class MainActivity extends Activity implements TransferManager.List
                 sb.append("\n").append(unsupported).append(unsupported == 1 ? " file" : " files")
                         .append(" in an unsupported format will be skipped");
             }
+            if (unavailable > 0) {
+                sb.append("\n").append(unavailable).append(" could not be prepared and will be skipped");
+            }
             if (rebuilt > 0) {
                 sb.append("\n").append(rebuilt).append(rebuilt == 1 ? " file arrived" : " files arrived")
                         .append(" without a file name; showing names based on the audio type");
@@ -634,6 +640,7 @@ public final class MainActivity extends Activity implements TransferManager.List
                     sb.append('\n');
                 }
                 sb.append("• ").append(item.displayName);
+                if (item.problem != null) sb.append(" — ").append(item.problem);
                 shown++;
             }
             sourceSummary.setText(sb.toString());
@@ -665,7 +672,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
 
         boolean running = manager.isRunning();
-        startButton.setEnabled(!running && !busy && !sources.isEmpty() && dest != null);
+        startButton.setEnabled(!running && !busy && supported > 0 && dest != null);
         cancelButton.setEnabled(running);
         addFilesButton.setEnabled(!busy);
         addFolderButton.setEnabled(!busy);
@@ -1743,15 +1750,9 @@ public final class MainActivity extends Activity implements TransferManager.List
             try {
                 String xml = readText(uri, 8 * 1024 * 1024);
                 List<Opml.Feed> feeds = Opml.parse(xml);
-                for (Opml.Feed feed : feeds) {
-                    SubscriptionStore.add(this, feed.url, feed.title);
-                }
-                final int count = feeds.size();
                 mainHandler.post(() -> {
                     setBusy(false, null);
-                    refreshSubscriptionStatus();
-                    toast(count == 0 ? "No feeds found in that OPML file"
-                            : "Imported " + count + (count == 1 ? " feed" : " feeds"));
+                    if (!isFinishing()) previewOpmlImport(feeds);
                 });
             } catch (Throwable t) {
                 mainHandler.post(() -> {
@@ -1760,6 +1761,10 @@ public final class MainActivity extends Activity implements TransferManager.List
                 });
             }
         });
+    }
+
+    private void previewOpmlImport(List<Opml.Feed> feeds) {
+        SubscriptionImportDialog.show(this, feeds, this::refreshSubscriptionStatus);
     }
 
     private void exportOpml() {

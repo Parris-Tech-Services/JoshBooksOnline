@@ -39,6 +39,7 @@ javac --release 17 -encoding UTF-8 -classpath "$BUILD/classes:$JUNIT:$HAMCREST$L
 echo "Running JUnit suites..."
 java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST$LIB_CP" org.junit.runner.JUnitCore \
   au.com.parristech.ruizusync.core.LogicGradleTests \
+  au.com.parristech.ruizusync.core.OpmlTest \
   au.com.parristech.ruizusync.net.FeedScannerTest \
   au.com.parristech.ruizusync.audio.Mp3EncoderTest \
   au.com.parristech.ruizusync.core.WavPcmReaderTest \

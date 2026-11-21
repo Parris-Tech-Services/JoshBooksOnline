@@ -29,6 +29,15 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public final class CrossAppAudioShareTest {
     @Test public void multipleGrantedAudioFilesKeepNamesAndReadableBytes() throws Exception {
+        checkShare(false);
+    }
+
+    @Test public void singleGrantedAudioFileKeepsNameAndReadableBytes() throws Exception {
+        checkShare(true);
+    }
+
+    private void checkShare(boolean single) throws Exception {
+        int count = single ? 1 : 2;
         Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         Context target = instrumentation.getTargetContext();
         Context sender = instrumentation.getContext();
@@ -51,14 +60,15 @@ public final class CrossAppAudioShareTest {
             Intent launchSender = new Intent()
                     .setClassName(sender.getPackageName(), ShareAudioActivity.class.getName())
                     .putExtra("targetPackage", target.getPackageName())
+                    .putExtra("single", single)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             target.startActivity(launchSender);
             long deadline = SystemClock.uptimeMillis() + 15000;
-            while (AppState.get().sourceCount() < 2 && SystemClock.uptimeMillis() < deadline) {
+            while (AppState.get().sourceCount() < count && SystemClock.uptimeMillis() < deadline) {
                 SystemClock.sleep(50);
             }
             List<SourceItem> selected = AppState.get().sources();
-            assertEquals("both files must reach the production share receiver", 2, selected.size());
+            assertEquals("all files must reach the production share receiver", count, selected.size());
             SourceRepo repo = new SourceRepo(target);
             for (int i = 0; i < selected.size(); i++) {
                 SourceItem item = selected.get(i);
