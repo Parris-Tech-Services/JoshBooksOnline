@@ -26,7 +26,7 @@ LIB_CP=""
 for jar in "$ROOT"/app/libs/*.jar; do
   [ -f "$jar" ] && LIB_CP="$LIB_CP:$jar"
 done
-find "$SRC/core" "$SRC/net/FeedScanner.java" "$SRC/audio/Mp3Encoder.java" "$SRC/TransferUtils.java" \
+find "$SRC/core" "$SRC/net/FeedScanner.java" "$SRC/net/DownloadResumePolicy.java" "$SRC/VerifiedCopy.java" "$SRC/audio/Mp3Encoder.java" "$SRC/TransferUtils.java" \
   -name '*.java' | sort > "$BUILD/main-sources.txt"
 echo "Compiling $(wc -l < "$BUILD/main-sources.txt") main source files..."
 javac --release 17 -encoding UTF-8 -classpath ".$LIB_CP" -d "$BUILD/classes" @"$BUILD/main-sources.txt"
@@ -41,6 +41,8 @@ java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST$LIB_CP" org.junit.
   au.com.parristech.ruizusync.core.LogicGradleTests \
   au.com.parristech.ruizusync.core.OpmlTest \
   au.com.parristech.ruizusync.net.FeedScannerTest \
+  au.com.parristech.ruizusync.net.DownloadResumePolicyTest \
+  au.com.parristech.ruizusync.VerifiedCopyTest \
   au.com.parristech.ruizusync.audio.Mp3EncoderTest \
   au.com.parristech.ruizusync.core.WavPcmReaderTest \
   au.com.parristech.ruizusync.TransferUtilsTest

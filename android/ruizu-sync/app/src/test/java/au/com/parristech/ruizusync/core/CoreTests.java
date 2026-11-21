@@ -23,6 +23,7 @@ public final class CoreTests {
         mediaTypes();
         mediaTypesFromMime();
         sharedUriNames();
+        sourceBuckets();
         fileNameSanitizer();
         fileNameSanitizerPaths();
         folderPlanner();
@@ -192,6 +193,23 @@ public final class CoreTests {
         SharedUriNames.Resolved numericName = SharedUriNames.resolve("99.mp3", "audio/mpeg", "99");
         checkEquals("numeric filename kept", "99.mp3", numericName.name);
         check("numeric filename supported", numericName.supported);
+    }
+
+    // ---- SourceBuckets --------------------------------------------------------------------
+
+    /** The summary must not call a file "unsupported format" when it is simply unreadable. */
+    private static void sourceBuckets() {
+        checkEquals("supported audio is supported", SourceBuckets.Bucket.SUPPORTED,
+                SourceBuckets.of(true, null));
+        checkEquals("known problem blocks supported audio", SourceBuckets.Bucket.UNREADABLE,
+                SourceBuckets.of(true, "leftover"));
+        checkEquals("unknown extension is an unsupported format",
+                SourceBuckets.Bucket.UNSUPPORTED_FORMAT, SourceBuckets.of(false, null));
+        checkEquals("nonempty problem matches transfer engine", SourceBuckets.Bucket.UNREADABLE,
+                SourceBuckets.of(false, "   "));
+        checkEquals("a stated problem is unreadable, not unsupported",
+                SourceBuckets.Bucket.UNREADABLE,
+                SourceBuckets.of(false, "The sending app shared no readable file name"));
     }
 
     // ---- FileNameSanitizer ----------------------------------------------------------------
