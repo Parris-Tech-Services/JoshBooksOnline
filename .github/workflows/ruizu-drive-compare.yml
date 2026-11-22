@@ -31,6 +31,11 @@ jobs:
       - name: Run unit tests (no personal Drive data)
         working-directory: tools/ruizu-drive-compare
         run: python -m unittest discover -s . -p 'test_*.py' -v
+      - name: Test Google Drive movie shortcut with synthetic video
+        run: |
+          bash -n tools/ruizu-drive-compare/termux_movie_shortcut.sh
+          bash -n tools/ruizu-drive-compare/install_movie_shortcut.sh
+          bash tools/ruizu-drive-compare/test_termux_movie_shortcut.sh
       - name: Verify sorter and video-converter syntax
         run: python -m py_compile tools/ruizu-drive-compare/sort_player.py tools/ruizu-drive-compare/test_sort_player.py tools/ruizu-drive-compare/prepare_video.py tools/ruizu-drive-compare/test_prepare_video.py tools/ruizu-drive-compare/one_movie.py tools/ruizu-drive-compare/test_one_movie.py tools/ruizu-drive-compare/ruizu_diagnose_repair.py tools/ruizu-drive-compare/test_ruizu_diagnose_repair.py
 
