@@ -108,3 +108,17 @@ pkg install -y python ffmpeg curl && curl -fL https://raw.githubusercontent.com/
 The helper checks the original video's format, preserves source media, encodes one 160×128 AMV locally in Downloads, validates the resulting codecs, then copies to `VIDEO/` **only if** that directory is mounted and writable. Copy is create-only and SHA-256 verified; existing destinations are never overwritten, and partial newly-created target files are cleaned up on failure. With no writable USB mount the finished AMV remains in Downloads to transfer manually. Real hardware playback needs a test on the unit.
 
 Synthetic smoke tests: `python -m unittest test_one_movie.py -v` (needs FFmpeg). A 1.2-second source converts and is copied to a simulated player with matching hashes.
+
+### Diagnose the physical RUIZU's AVI and audio sorting discrepancy (Termux)
+
+The published `ruizu_diagnose_repair.py` replaces guesswork about `VIDEO/All DX.avi`. It reads the vendor sample and any converted AVI, checks video/audio codecs, size, frame rate, RIFF/AVI header flags, actual `idx1` index chunks and OpenDML indices **without reading the entire film into RAM**, and checks Marconi Union copies and sort manifests by SHA-256.
+
+Default: read-only player inspection, a fresh **12-second MJPEG/ADPCM AVI test** written to phone Downloads, and a local timestamped `RUIZU-DIAGNOSIS-*.json` report. It never changes existing player files, never deletes audio and never rewrites `.LIB`. The movie clip uses the *actual* sample's dimensions/frame rate/audio sample rate, not an assumed model. When it cannot read the vendor sample, it reports the blocker rather than guessing. The preview is technically format-checked; physical playback remains unverified until tested on the unit.
+
+```sh
+pkg install -y python ffmpeg curl && curl -fL https://raw.githubusercontent.com/Parris-Tech-Services/JoshBooksOnline/main/tools/ruizu-drive-compare/ruizu_diagnose_repair.py -o ~/ruizu-repair.py && python ~/ruizu-repair.py
+```
+
+If all device writes are idle and a test needs putting in the player, run `python ~/ruizu-repair.py --copy-test`, which uses no-overwrite creation and checksum verification. It only copies a 12-second test, never the whole movie. `--movie /path/to/original.mp4 --full` prepares a complete converted AVI **locally** (in Downloads), never on the RUIZU; use only after physical playback confirms a test clip. `--diagnose-only` skips even local conversion. `--restore-marconi` is an **explicit** create-only recovery option and refuses to run unless the sort manifest and at least two retained identical recordings support rebuilding the missing duplicate. No player writes occur in default mode.
+
+Five synthetic unit tests exercise accurate AVI index traversal, no-overwrite and SHA-256 copying, source preservation, safe duplicate reconstruction rules and matching vendor codec settings. Audio/video binaries or personal player reports are not stored in this public repository.
