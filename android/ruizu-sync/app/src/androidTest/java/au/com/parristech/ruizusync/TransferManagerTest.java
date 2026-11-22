@@ -55,7 +55,8 @@ public final class TransferManagerTest {
             // before this new transfer has begun.
             manager.addListener(listener);
             assertTrue("AMV transfer did not finish",finished.await(20,TimeUnit.SECONDS));
-            assertEquals(manager.snapshot().status,1,manager.snapshot().copied);
+            assertEquals(manager.snapshot().status + " | " + manager.snapshot().log,
+                    1,manager.snapshot().copied);
             assertEquals(0,manager.snapshot().failed);
             assertTrue("AMV must go into VIDEO",manager.snapshot().log.toString().contains("→ VIDEO"));
             assertTrue("Must use SHA-256 readback",manager.snapshot().log.toString().contains("SHA-256 verified"));
