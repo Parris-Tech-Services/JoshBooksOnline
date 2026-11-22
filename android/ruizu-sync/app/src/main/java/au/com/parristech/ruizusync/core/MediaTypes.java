@@ -32,6 +32,9 @@ public final class MediaTypes {
         map.put("opus", "audio/ogg");
         map.put("aif", "audio/x-aiff");
         map.put("aiff", "audio/x-aiff");
+        // Hardware-tested on the RUIZU volume 0000-006F. Original MP4/MKV need
+        // conversion before transfer: AMV is already in the player's native format.
+        map.put("amv", "video/x-amv");
         EXTENSION_TO_MIME = Collections.unmodifiableMap(map);
     }
 
@@ -59,6 +62,11 @@ public final class MediaTypes {
         return EXTENSION_TO_MIME.containsKey(extensionOf(displayName));
     }
 
+    /** True only for already-converted videos proven playable on this RUIZU model. */
+    public static boolean isConvertedVideo(String displayName) {
+        return "amv".equals(extensionOf(displayName));
+    }
+
     /** MIME type used when creating the document on the player, e.g. audio/mpeg. */
     public static String mimeTypeFor(String displayName) {
         String mime = EXTENSION_TO_MIME.get(extensionOf(displayName));
@@ -69,6 +77,8 @@ public final class MediaTypes {
     public static String[] pickerMimeTypes() {
         List<String> unique = new ArrayList<>();
         unique.add("audio/*");
+        // Narrow video filter: original MP4/MKV are not playable without transcoding.
+        unique.add("video/x-amv");
         for (String type : EXTENSION_TO_MIME.values()) {
             if (!unique.contains(type)) {
                 unique.add(type);
@@ -91,6 +101,9 @@ public final class MediaTypes {
             normalized = normalized.substring(0, semicolon).trim();
         }
         switch (normalized) {
+            case "video/x-amv":
+            case "video/amv":
+                return "amv";
             case "audio/mpeg":
             case "audio/mp3":
             case "audio/mpeg3":
@@ -149,6 +162,6 @@ public final class MediaTypes {
     }
 
     public static String supportedList() {
-        return "MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF";
+        return "MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF, converted AMV video";
     }
 }

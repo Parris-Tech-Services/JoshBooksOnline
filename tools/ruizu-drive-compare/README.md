@@ -124,3 +124,23 @@ pkg install -y python ffmpeg curl && curl -fL https://raw.githubusercontent.com/
 If all device writes are idle and a test needs putting in the player, run `python ~/ruizu-repair.py --copy-test`, which uses no-overwrite creation and checksum verification. It only copies a 12-second test, never the whole movie. `--movie /path/to/original.mp4 --full` prepares a complete converted AVI **locally** (in Downloads), never on the RUIZU; use only after physical playback confirms a test clip. `--diagnose-only` skips even local conversion. `--restore-marconi` is an **explicit** create-only recovery option and refuses to run unless the sort manifest and at least two retained identical recordings support rebuilding the missing duplicate. No player writes occur in default mode.
 
 Five synthetic unit tests exercise accurate AVI index traversal, no-overwrite and SHA-256 copying, source preservation, safe duplicate reconstruction rules and matching vendor codec settings. Audio/video binaries or personal player reports are not stored in this public repository.
+
+
+### RUIZU Movie — Android Home screen shortcut (AMV transfer hand-off)
+
+The RUIZU player tested on 22 November 2026 **plays 160×128 AMV at 15 fps** (both the small T4 test and the full *Pay It Forward* film). Newly encoded MJPEG AVI files showed "Format error!" even when the headers matched the supplied AVI sample.
+
+The launcher `termux_movie_shortcut.sh` uses Android's **ACTION_OPEN_DOCUMENT** picker through Termux:API: choose a movie or episode in Google Drive (or on the phone), wait for it to be downloaded into a private temporary file, optionally name it, convert it to the measured AMV profile and verify its codecs with FFprobe. It saves a non-overwriting AMV in Downloads, then opens the Android share sheet so **RUIZU Sync 1.2.7** can use its existing journalled and SHA-256-verified SAF writer to copy it into `VIDEO/` on the USB player's root.
+
+Termux installation (after installing matching-source **Termux:API** and **Termux:Widget** Android add-ons):
+
+```sh
+pkg install -y python ffmpeg curl termux-api && curl -fL https://raw.githubusercontent.com/Parris-Tech-Services/JoshBooksOnline/main/tools/ruizu-drive-compare/install_movie_shortcut.sh -o "$HOME/install-ruizu-movie.sh" && bash "$HOME/install-ruizu-movie.sh"
+```
+
+Then add the **Termux:Widget** widget to the Android Home screen (refresh it if needed), and tap **RUIZU Movie**. In the system picker choose Google Drive and pick the desired film. When the share sheet appears, choose **RUIZU Sync**. In RUIZU Sync, ensure the saved destination is the **root of the connected RUIZU**, not the Music/VIDEO subfolder, review the selected AMV and press **Start transfer**. Check the SHA-256 verification result, safely eject and play it on the device.
+
+This is **one tap to launch**, not one unattended tap for all steps: Android still requires choosing the private Drive file, the target app and approving the USB destination. The shortcut does **not** download via public Drive URLs, ask for credentials, bypass DRM, directly write to USB or delete any existing song/movie. If the share sheet fails, use the new in-app **Add converted AMV movie** picker to select the output from Downloads. The script requires enough free space on the phone for a temporary source copy and AMV output; failure does not modify existing RUIZU files.
+
+**Verification gates:** synthetic FFmpeg conversion + share-argument test, Android JVM checks, instrumented fake-USB SAF copy and final on-device Drive-picker/transfer/playback tests. Source, converted copy and transfer are distinct: converting and opening the share sheet **does not prove** the file reached the player. The full Android integration remains partially complete until a real Galaxy A55 and RUIZU copy has been observed.
+
