@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 AUDIO={'.mp3','.m4a','.aac','.wav','.flac','.ogg','.wma','.ape','.aif','.aiff','.opus','.m4b'}
+VIDEO={'.amv','.avi','.mp4','.mkv','.mov','.wmv','.m4v','.webm','.flv','.mpg','.mpeg'}
 MUSIC={'bridge to terabithia soundtrack','ice princess','james bay','mamma mia (the movie)','mumford & sons','the fault in our stars','the hunger games_ catching fire [deluxe]','lord of the rings- the fellowship of the ring','shrek 2','ben folds','ben harper','brooke fraser','missy higgins','sia','birdy','soundtracks disney'}
 
 def files(root):
@@ -60,7 +61,17 @@ def plan(root):
     allfiles=list(files(root));protected=playlist_links(root,allfiles)
     rows=[]
     for rel in allfiles:
-        if rel.suffix.lower() not in AUDIO:continue
+        suffix=rel.suffix.lower()
+        if suffix in VIDEO:
+            # Video support varies substantially by RUIZU model. Never move videos
+            # without a tested codec/resolution profile and a manual decision.
+            organised=bool(rel.parts and rel.parts[0].casefold() in ('videos','video','movies'))
+            rows.append(dict(status='VIDEO_PRESENT' if organised else 'VIDEO_REVIEW',
+                             current_path=rel.as_posix(),proposed_path='',
+                             size_bytes=(root/rel).stat().st_size,
+                             reason='Video untouched; confirm player model and codec before sorting'))
+            continue
+        if suffix not in AUDIO:continue
         dest,reason=destination(rel)
         if dest is None:status='LEAVE' if reason=='Already organised' else 'REVIEW'
         elif rel in protected:status='PLAYLIST_PROTECTED';reason='Existing playlist references this file'
@@ -106,7 +117,7 @@ def main():
     root=args.root.resolve()
     rows=plan(root);write_csv(args.report,rows)
     counts=Counter(x['status'] for x in rows)
-    print('Audio:',len(rows),'|', ' | '.join(k+': '+str(counts[k]) for k in ('READY','LEAVE','REVIEW','COLLISION','PLAYLIST_PROTECTED')))
+    print('Audio:',len(rows),'|', ' | '.join(k+': '+str(counts[k]) for k in ('READY','LEAVE','REVIEW','COLLISION','PLAYLIST_PROTECTED','VIDEO_REVIEW','VIDEO_PRESENT')))
     print('Plan:',args.report)
     if not args.apply:
         print('PREVIEW ONLY — nothing on the RUIZU changed. Add --apply after reviewing the CSV.')
