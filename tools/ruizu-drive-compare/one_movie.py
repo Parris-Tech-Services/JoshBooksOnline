@@ -7,7 +7,6 @@ from pathlib import Path
 
 NAME = 'Wreck It Ralph (2012).mp4'
 OUTPUT = 'Wreck It Ralph (2012) - RUIZU 160x128.amv'
-DRIVE_URL = 'https://drive.google.com/file/d/1KZTV7ewwysQvulofmFTc9Etw9Yf2g7Z-/view'
 PLAYER = Path('/mnt/media_rw/0000-006F')
 
 def sha256(p):
@@ -22,7 +21,7 @@ def run(args):
         raise RuntimeError('Termux shared Downloads unavailable. Run termux-setup-storage once, then rerun.')
     src = Path(args.source).expanduser() if args.source else downloads/NAME
     if not src.is_file() or src.is_symlink():
-        raise RuntimeError(f'Movie not downloaded yet: {src}\nOpen {DRIVE_URL} in Google Drive, tap Download, then rerun. No files changed.')
+        raise RuntimeError(f'Movie not downloaded yet: {src}\nOpen your film in the Google Drive app, tap Download, then rerun. No files changed.')
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
         raise RuntimeError('Missing FFmpeg. Run: pkg install ffmpeg')
     if subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=codec_type','-of','csv=p=0',str(src)],capture_output=True,text=True).stdout.strip()!='video':
