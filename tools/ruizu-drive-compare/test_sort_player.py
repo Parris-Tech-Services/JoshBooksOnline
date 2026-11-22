@@ -66,6 +66,16 @@ class SorterTests(unittest.TestCase):
         self.assertEqual(self.statuses(),{})
         self.assertEqual((external/'evil.mp3').read_bytes(),b'outside')
 
+    def test_videos_are_reported_but_never_moved(self):
+        video=self.put('New Movie.mp4',b'video')
+        existing=self.put('Videos/Old Movie.amv',b'old')
+        data=self.statuses()
+        self.assertEqual(data['New Movie.mp4']['status'],'VIDEO_REVIEW')
+        self.assertEqual(data['Videos/Old Movie.amv']['status'],'VIDEO_PRESENT')
+        self.assertEqual(sorter.apply(self.root,list(data.values())),[])
+        self.assertEqual(video.read_bytes(),b'video')
+        self.assertEqual(existing.read_bytes(),b'old')
+
     def test_csv_protects_formula_like_names(self):
         from tempfile import TemporaryDirectory
         with TemporaryDirectory() as t:
