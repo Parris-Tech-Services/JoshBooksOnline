@@ -44,9 +44,6 @@ def command(inp, out, profile, seconds, sample):
     return cmd+[str(out)]
 
 def process(args):
-    for exe in ('ffmpeg','ffprobe'):
-        if shutil.which(exe) is None:
-            raise ValueError(f'{exe} not available. In Termux: pkg install ffmpeg')
     if args.sample and args.input:
         raise ValueError('Choose --sample OR --input, not both')
     if not args.sample and not args.input:
@@ -69,6 +66,9 @@ def process(args):
         raise ValueError('Direct writes to a mounted player are refused; use phone Downloads')
     if dest.exists():
         raise ValueError('Output already exists; leaving it intact: '+str(dest))
+    for exe in ('ffmpeg','ffprobe'):
+        if shutil.which(exe) is None:
+            raise ValueError(f'{exe} not available. In Termux: pkg install ffmpeg')
     dest.parent.mkdir(parents=True,exist_ok=True)
     seconds=None if args.full else (8 if args.sample else 20)
     result=subprocess.run(command(inp,dest,args.profile,seconds,args.sample),capture_output=True,text=True)
