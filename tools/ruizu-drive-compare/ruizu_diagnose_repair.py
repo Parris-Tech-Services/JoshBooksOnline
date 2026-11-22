@@ -32,8 +32,11 @@ def sha256(path):
     return h.hexdigest()
 
 
-def safe_files(folder, recursive=False):
-    if not folder.is_dir() or folder.is_symlink():
+def safe_files(folder, recursive=False, allow_folder_symlink=False):
+    # Termux ~/storage/downloads is a symlink to Android's shared Downloads.
+    # Only callers explicitly reading phone Downloads may follow that directory;
+    # player/media scanning still refuses symlink directories and symlink files.
+    if not folder.is_dir() or (folder.is_symlink() and not allow_folder_symlink):
         return []
     try:
         if recursive:
@@ -184,7 +187,7 @@ def fps_from_vendor(video):
 def candidate_sources(root, downloads):
     candidates = []
     for folder in (downloads, root / 'VIDEO'):
-        for p in safe_files(folder):
+        for p in safe_files(folder, allow_folder_symlink=(folder == downloads)):
             if p.suffix.lower() not in VIDEO_EXTS or p.name.casefold() == VENDOR.casefold():
                 continue
             rank = (0 if ('wreck' in p.name.casefold() or 'ralph' in p.name.casefold()) else
@@ -389,7 +392,7 @@ def diagnostic_report(root, home, downloads):
             doc['video_comparison'] = observed
     else:
         doc['warnings'] = ['Player not mounted: no access to sample AVI or Marconi files.']
-    doc['phone_videos'] = [p.name for p in safe_files(downloads) if p.suffix.lower() in VIDEO_EXTS][:30]
+    doc['phone_videos'] = [p.name for p in safe_files(downloads, allow_folder_symlink=True) if p.suffix.lower() in VIDEO_EXTS][:30]
     return doc
 
 

@@ -96,6 +96,24 @@ class RuizuDiagnosisTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'already exists'):
             r.restore_marconi(self.root, report)
 
+    def test_termux_downloads_symlink_discovered_without_following_player_links(self):
+        # Android exposes ~/storage/downloads as a symlink. Scanning it must
+        # work without weakening the default player symlink protections.
+        local_movie = self.downloads / 'Wreck It Ralph (2012).avi'
+        self.make_avi(local_movie, 320, 240)
+        link = self.home / 'storage' / 'downloads'
+        link.parent.mkdir()
+        link.symlink_to(self.downloads, target_is_directory=True)
+        linked_file = self.downloads / 'linked-vendor.avi'
+        linked_file.symlink_to(self.sample)
+        self.assertEqual(r.safe_files(link), [])
+        self.assertEqual([p.name for p in r.safe_files(link, allow_folder_symlink=True)],
+                         [local_movie.name])
+        self.assertEqual(r.candidate_sources(self.root, link)[0].name, local_movie.name)
+        report = r.diagnostic_report(self.root, self.home, link)
+        self.assertIn(local_movie.name, report['phone_videos'])
+        self.assertNotIn(linked_file.name, report['phone_videos'])
+
     def test_no_movie_generates_synthetic_preview_with_vendor_format(self):
         output, meta = r.create_preview(self.root, self.downloads, self.sample)
         self.assertTrue(output.exists())

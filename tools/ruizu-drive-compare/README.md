@@ -81,6 +81,8 @@ Read the CSV plan in the phone's Downloads. Only after reviewing each proposed `
 
 ## Movie compatibility: local converter and test videos
 
+**Physical-player result (22 November 2026):** the bundled vendor AVI copied as `T0-VENDOR-COPY.avi` plays, but three newly encoded AVI variants (`T1`, `T2`, `T3`) all display **Format error!**. The `T4-AMV.amv` 160×128/15 fps/22.05 kHz mono test **plays on the actual RUIZU**. For this device, prefer the tested `amv-160x128` profile for the next film; an AVI that passes FFprobe does **not** establish on-player playback. A complete film conversion/copy has not yet been confirmed playable. See Android `TODO.md` item 28.
+
 There is no single universal RUIZU video format. Some models require very small `.amv` files, while video-capable newer models accept `.mp4`. The script **does not** determine the device model and **does not** copy videos to the player.
 
 `prepare_video.py` uses FFmpeg and FFprobe. Profiles: `amv-160x128` (default), `amv-128x160`, `amv-128x128`, `mp4-320x240`. For AMV, a test with FFmpeg was successfully generated using 15 fps, 22050 Hz mono ADPCM audio and a 1470-byte audio block size.
@@ -113,7 +115,7 @@ Synthetic smoke tests: `python -m unittest test_one_movie.py -v` (needs FFmpeg).
 
 The published `ruizu_diagnose_repair.py` replaces guesswork about `VIDEO/All DX.avi`. It reads the vendor sample and any converted AVI, checks video/audio codecs, size, frame rate, RIFF/AVI header flags, actual `idx1` index chunks and OpenDML indices **without reading the entire film into RAM**, and checks Marconi Union copies and sort manifests by SHA-256.
 
-Default: read-only player inspection, a fresh **12-second MJPEG/ADPCM AVI test** written to phone Downloads, and a local timestamped `RUIZU-DIAGNOSIS-*.json` report. It never changes existing player files, never deletes audio and never rewrites `.LIB`. The movie clip uses the *actual* sample's dimensions/frame rate/audio sample rate, not an assumed model. When it cannot read the vendor sample, it reports the blocker rather than guessing. The preview is technically format-checked; physical playback remains unverified until tested on the unit.
+Default: read-only player inspection, a fresh **12-second MJPEG/ADPCM AVI diagnostic sample** (not an accepted playback profile) written to phone Downloads, and a local timestamped `RUIZU-DIAGNOSIS-*.json` report. It never changes existing player files, never deletes audio and never rewrites `.LIB`. The movie clip uses the *actual* sample's dimensions/frame rate/audio sample rate, not an assumed model. **Physical tests rejected three other newly encoded AVI variants with Format error. This diagnostic AVI itself has not been playback-tested**, despite matching the sample's technical codec parameters. When it cannot read the vendor sample, it reports the blocker rather than guessing. The preview is technically format-checked; physical playback remains unverified until tested on the unit.
 
 ```sh
 pkg install -y python ffmpeg curl && curl -fL https://raw.githubusercontent.com/Parris-Tech-Services/JoshBooksOnline/main/tools/ruizu-drive-compare/ruizu_diagnose_repair.py -o ~/ruizu-repair.py && python ~/ruizu-repair.py
