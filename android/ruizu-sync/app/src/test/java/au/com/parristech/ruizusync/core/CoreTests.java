@@ -121,6 +121,7 @@ public final class CoreTests {
         checkEquals("mime with params", "mp3", MediaTypes.extensionForMime("audio/mpeg; charset=utf-8"));
         checkEquals("mime m4a", "m4a", MediaTypes.extensionForMime("audio/x-m4a"));
         checkEquals("mime ogg app", "ogg", MediaTypes.extensionForMime("application/ogg"));
+        checkEquals("mime amv", "amv", MediaTypes.extensionForMime("video/x-amv"));
         checkEquals("mime html", "", MediaTypes.extensionForMime("text/html"));
         checkEquals("mime null", "", MediaTypes.extensionForMime(null));
 
