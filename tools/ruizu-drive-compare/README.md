@@ -65,3 +65,30 @@ node --test tools/ruizu-drive-compare/test_offline_review.mjs
 ```
 
 Only synthetic audio records are used in tests, and no personal audio or Drive links belong in this public repository. The HTML's Content Security Policy blocks external network requests.
+
+
+## RUIZU player sorting from Termux
+
+`sort_player.py` inventories audio **and video**, but moves nothing by default. It classifies artist/soundtrack folders under the legacy `__1`, loose music, Outlander audiobooks and already-organised podcasts. Unknown folders remain `REVIEW`; video files remain `VIDEO_REVIEW` or `VIDEO_PRESENT` until the player model and playback format are confirmed. Existing playlists are checked so their referenced files are not moved. Files in Music, Podcasts and Audiobooks are left intact; .LIB indexes and non-media/system files are never changed. The CSV and log are written outside the player.
+
+Termux (one line each):
+
+```sh
+pkg install -y python curl && curl -fL https://raw.githubusercontent.com/Parris-Tech-Services/JoshBooksOnline/main/tools/ruizu-drive-compare/sort_player.py -o "$HOME/ruizu-sort.py" && python "$HOME/ruizu-sort.py"
+```
+
+Read the CSV plan in the phone's Downloads. Only after reviewing each proposed `READY` move, the optional command is `python "$HOME/ruizu-sort.py" --apply`. It performs non-overwriting renames on the mounted player, and a hardware media-library rescan may then be necessary. Mount path is configurable with `--root`; default is the previously observed `/mnt/media_rw/0000-006F`. This path must be mounted and accessible to Termux.
+
+## Movie compatibility: local converter and test videos
+
+There is no single universal RUIZU video format. Some models require very small `.amv` files, while video-capable newer models accept `.mp4`. The script **does not** determine the device model and **does not** copy videos to the player.
+
+`prepare_video.py` uses FFmpeg and FFprobe. Profiles: `amv-160x128` (default), `amv-128x160`, `amv-128x128`, `mp4-320x240`. For AMV, a test with FFmpeg was successfully generated using 15 fps, 22050 Hz mono ADPCM audio and a 1470-byte audio block size.
+
+```sh
+pkg install -y python curl ffmpeg && curl -fL https://raw.githubusercontent.com/Parris-Tech-Services/JoshBooksOnline/main/tools/ruizu-drive-compare/prepare_video.py -o "$HOME/ruizu-video.py" && python "$HOME/ruizu-video.py" --sample
+```
+
+That creates an eight-second synthetic AMV in the phone's Downloads (or in Termux home if the shared storage link is absent). Copy that clip to the player and test playback. If the model needs a different profile, supply `--profile amv-128x128` or `--profile mp4-320x240` and test again.
+
+Only after a sample plays on the **physical** unit, a locally downloaded movie can be previewed via `python "$HOME/ruizu-video.py" --input "$HOME/storage/downloads/Movie.mp4" --profile amv-160x128` (20-second preview) or converted in full with `--full`. This script does not download from Drive; download the file from your own Drive to the phone first. No DRM bypass is provided. The script writes outside the player and refuses existing output names.

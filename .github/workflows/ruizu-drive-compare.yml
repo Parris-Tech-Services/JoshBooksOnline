@@ -29,6 +29,8 @@ jobs:
       - name: Run unit tests (no personal Drive data)
         working-directory: tools/ruizu-drive-compare
         run: python -m unittest discover -s . -p 'test_*.py' -v
+      - name: Verify sorter and video-converter syntax
+        run: python -m py_compile tools/ruizu-drive-compare/sort_player.py tools/ruizu-drive-compare/test_sort_player.py tools/ruizu-drive-compare/prepare_video.py tools/ruizu-drive-compare/test_prepare_video.py
 
   offline-browser-tests:
     name: Offline browser comparison tests
