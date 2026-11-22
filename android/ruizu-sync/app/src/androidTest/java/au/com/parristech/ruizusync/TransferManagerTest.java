@@ -47,10 +47,13 @@ public final class TransferManagerTest {
         TransferManager manager=TransferManager.get(context);
         CountDownLatch finished=new CountDownLatch(1);
         TransferManager.Listener listener=snapshot->{if(snapshot.isFinished() && !snapshot.running)finished.countDown();};
-        manager.addListener(listener);
         try {
             manager.start(new TransferManager.Request(Collections.singletonList(item),tree,
                     FolderPlanner.OrganiseMode.ARTIST_ALBUM,DuplicateMode.SKIP_EXACT));
+            // Register after start: addListener replays the current snapshot. Registering
+            // beforehand can replay the preceding test’s DONE snapshot and count down
+            // before this new transfer has begun.
+            manager.addListener(listener);
             assertTrue("AMV transfer did not finish",finished.await(20,TimeUnit.SECONDS));
             assertEquals(manager.snapshot().status,1,manager.snapshot().copied);
             assertEquals(0,manager.snapshot().failed);
