@@ -37,7 +37,7 @@ Items #8 and #12 meet their full listed acceptance criteria. Unchecked items ret
 | 25 | **NOT COMPLETE** | Same remaining normalisation/artwork work as 9 and 10; not a basic-transfer release blocker. |
 | 26 | **NOT COMPLETE** | Optional scheduling, download preferences, multiple plans, richer browsing and lifecycle/job migration remain. |
 | 27 | **PARTIALLY COMPLETE** | Signed 1.2.6 APK delivered; automated verification passed. Final physical acceptance and public release notes/download publication remain to confirm. |
-| 28 | **NOT COMPLETE** | Not built: video is entirely outside the app, which is audio-only. **Player-verified format is AMV** (160×128, 15 fps, `adpcm_ima_amv` block 1470, 22.05 kHz mono) — confirmed by an on-device playback test that rejected every AVI variant. One film (271 MB) delivered as AMV. |
+| 28 | **PARTIALLY COMPLETE — device format verified, app feature not built** | The physical player plays the AMV test and **Pay It Forward (2000)** in 160×128 AMV; newly encoded AVI variants fail. Native video select/convert/transfer through RUIZU Sync still needs implementation and verification. |
 
 ## Latest implementation evidence: 1.2.6
 
@@ -149,20 +149,24 @@ The original feature items 1–11 above remain the authoritative feature-specifi
 
 27. [ ] **Publish evidence-backed release notes and a verified installable APK.** After changes, require unit tests, all relevant Android instrumentation tests, static signing/manifest validation, emulator install/launch, and specifically named physical-device checks. Publish the precise release build with versionCode/versionName, canonical application ID, signer fingerprint, CI run, PR/commit SHA and a direct APK download link. Clearly separate **VERIFIED COMPLETE**, **PARTIALLY COMPLETE**, and **BLOCKED**; avoid claiming all features or Google Drive support are physically verified until they are.
 
-28. [ ] **Support video/movie transfer for the player's video capability.** Volume `0000-006F` is video-capable: it carries `VIDEO/` and `VIDEO.LIB`, and the vendor-supplied sample `VIDEO/All DX.avi` decodes as **MJPEG, 208×176, 500000/23061 fps (21.68), ADPCM IMA WAV 22.05 kHz mono, ~1.06 Mbps**. RUIZU Sync is audio-only today: `MediaTypes` accepts mp3/wav/flac/wma/ape/aac/m4a/ogg/aiff, there is no video source, no video conversion and no `VIDEO/` destination, so a picked or shared movie is reported as an unsupported format.
-    - Done when: video can be selected and sent through the **existing** journalled verified writer rather than a second transfer engine; conversion produces **AMV at 160×128 / 15 fps with `adpcm_ima_amv` 1470-byte blocks and 22.05 kHz mono audio**, letterboxing instead of stretching; the quality-versus-size trade-off is stated in the UI; failures, cancellation, partial output and storage exhaustion behave as they already do for audio; existing videos are never overwritten or deleted; and the **player actually plays the converted file** after a system eject and re-mount on the Galaxy A55. Do not claim video support from an encoding that merely matches the sample.
-    - Comparison: **MediaMonkey** and **doubleTwist** both convert media to a device profile during sync; this is the same idea limited to a profile proven by playback.
-    - **Device-verified result (Galaxy A55 + `0000-006F`, files played from `VIDEO/`):**
-        | Candidate | Result |
-        | --- | --- |
-        | `All DX.avi` and a renamed copy of it (vendor sample, 208×176 MJPEG AVI) | **plays** |
-        | Standard MJPEG AVI, headers byte-matched to the vendor sample, 512-byte ADPCM blocks, `JUNK` stripped | **Format error!** |
-        | MPEG-4/Xvid + MP3 in AVI | **Format error!** |
-        | **AMV** 160×128, 15 fps, `adpcm_ima_amv` block 1470, 22.05 kHz mono | **plays** |
-    - **Do not infer the encodable format from the vendor sample.** Its parameters look like ordinary AVI, but the player rejects every AVI this project produced, including one whose `avih`/`strh` fields, chunk order and ADPCM block size were made identical to it. At frame level the vendor JPEG carries two `DQT` tables, `SOF0` before four `DHT` tables and no comment marker, while ffmpeg's MJPEG emitter wrote one `DQT`, a `COM` chunk and `DHT` before `SOF0`. The decoder is strict at frame level, so **AMV is the target**.
-    - Working recipe: `ffmpeg -map 0:v:0 -map 0:a:0 -vf "scale=160:128:force_original_aspect_ratio=decrease,pad=160:128:(ow-iw)/2:(oh-ih)/2:black" -r 15 -c:v amv -c:a adpcm_ima_amv -block_size 1470 -ar 22050 -ac 1`. A 1 h 58 m film encoded to **271 MB in 5 m 06 s** on the A55 and played on the device; the source was a 483 MB H.264/AAC MKV.
-    - Lesson for the release checklist: an encoding that matches a vendor sample's headers is **not** evidence of playback, and a passing local `ffprobe` is not either. Only pressing play on the player counts.
-    - Scale warning before any bulk work: the source movie library sampled for this work is 35 files / 29 GB, which converts to roughly 18 GB (≈3.5 h of encoding) against 36 GB free — a whole-library copy would leave little headroom, so selection is a product decision, not a detail.
+28. [ ] **Support video/movie transfer for the player's video capability.** The RUIZU volume `0000-006F` exposes `VIDEO/` and `VIDEO.LIB`. The vendor's playable `All DX.avi` uses MJPEG at 208×176 and IMA ADPCM WAV audio. **Do not infer the device's usable conversion profile from the supplied AVI:** the newly generated AVI variants all showed `Format error!`. The Android RUIZU Sync app is still audio-only.
+
+    - **Hardware playback matrix (reported by the user, 22 November 2026):**
+
+      | Candidate | Observed result |
+      | --- | --- |
+      | `All DX.avi` and renamed `T0-VENDOR-COPY.avi` | **Plays** |
+      | `T1-OLD-FORMAT.avi`, MJPEG AVI | **Format error!** |
+      | `T2-NEW-FORMAT.avi`, header-normalised MJPEG AVI | **Format error!** |
+      | `T3-XVID-MP3.avi` | **Format error!** |
+      | `T4-AMV.amv`, 160×128 at 15 fps | **Plays** |
+      | **`Pay It Forward (2000) - RUIZU.amv`**, full 271 MB feature film | **Plays** — user explicitly confirmed physical playback |
+
+    - **Verified AMV recipe for this player:** letterbox/pad to **160×128**, **15 fps**, video `amv`, audio `adpcm_ima_amv` with **1470-byte block**, **22,050 Hz mono**. For an input with both video and audio streams, FFmpeg parameters are `-map 0:v:0 -map 0:a:0 -vf "scale=160:128:force_original_aspect_ratio=decrease,pad=160:128:(ow-iw)/2:(oh-ih)/2:black" -r 15 -c:v amv -c:a adpcm_ima_amv -block_size 1470 -ar 22050 -ac 1`. The first full film, **Pay It Forward (2000)**, was reportedly encoded in 5m 06s from a 483 MB source, written to the RUIZU as a 271 MB file, and verified byte-identical by SHA-256 (reported prefix `97d9d098`). The user then physically confirmed it **plays**. The separate earlier **Wreck It Ralph (2012)** AMV was verified in phone Downloads but **not confirmed on the player**.
+    - **Next film:** `I Still Know What You Did Last Summer (1998)` was being downloaded/converted by another agent when the user shared the transcript. Completion, SHA-256 verification, safe eject and physical playback are **not yet confirmed**. Do not imply it has finished or was copied.
+    - **AVI frame-level investigation (agent-reported, not independently verified from the two binary samples here):** the vendor JPEG reportedly carries two `DQT` tables, `SOF0` preceding four `DHT` tables and no `COM` marker, unlike the FFmpeg-generated MJPEG. This difference is a plausible reason for failure, **not a proved single root cause**. The playback matrix, not the JPEG hypothesis, is the acceptance evidence.
+    - **Done when:** RUIZU Sync can select video, produce letterboxed files with this hardware-tested AMV profile, display codec/quality/size trade-offs, and transfer through the **existing** journalled, SHA-256-verified writer. Validate source preservation, cancellation, provider failure, partial output, FAT32 4 GiB limitations, disk space, collisions, safe eject and actual playback of an app-transferred full film. No existing file deletion/overwrite and no `.LIB` edits.
+    - **Library scale:** the previous `~18 GB` projection came from the **failed AVI format**, so do not reuse it. A rough AMV projection of 34 similar-sized films is around 9 GB / 3 hours based on this one successful film, but movie duration, settings and device throughput vary. Calculate actual per-film output sizes before any bulk transfer.
 
 ### Suggested order for the next work session
 
