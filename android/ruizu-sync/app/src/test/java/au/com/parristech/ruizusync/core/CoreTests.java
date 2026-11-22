@@ -92,18 +92,26 @@ public final class CoreTests {
         checkEquals("ext null", "", MediaTypes.extensionOf(null));
         check("mp3 supported", MediaTypes.isSupported("track.mp3"));
         check("m4b supported", MediaTypes.isSupported("book.m4b"));
+        check("converted AMV supported", MediaTypes.isSupported("Film.AMV"));
+        check("AMV recognised as video", MediaTypes.isConvertedVideo("Film.AMV"));
+        check("MP3 is not video", !MediaTypes.isConvertedVideo("track.mp3"));
+        check("unconverted MP4 rejected", !MediaTypes.isSupported("movie.mp4"));
+        checkEquals("AMV MIME", "video/x-amv", MediaTypes.mimeTypeFor("film.amv"));
         check("exe not supported", !MediaTypes.isSupported("virus.exe"));
         check("jpg not supported", !MediaTypes.isSupported("cover.jpg"));
         checkEquals("mime mp3", "audio/mpeg", MediaTypes.mimeTypeFor("x.mp3"));
         checkEquals("mime unknown", "application/octet-stream", MediaTypes.mimeTypeFor("x.xyz"));
 
         boolean hasAudioWildcard = false;
+        boolean hasAmv = false;
         boolean hasOctetStream = false;
         for (String type : MediaTypes.pickerMimeTypes()) {
             hasAudioWildcard |= "audio/*".equals(type);
+            hasAmv |= "video/x-amv".equals(type);
             hasOctetStream |= "application/octet-stream".equals(type);
         }
         check("picker includes audio/*", hasAudioWildcard);
+        check("picker includes AMV only", hasAmv);
         check("picker includes octet-stream", hasOctetStream);
         check("supported list mentions MP3", MediaTypes.supportedList().contains("MP3"));
     }
