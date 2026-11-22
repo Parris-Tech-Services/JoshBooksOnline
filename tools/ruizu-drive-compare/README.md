@@ -92,3 +92,19 @@ pkg install -y python curl ffmpeg && curl -fL https://raw.githubusercontent.com/
 That creates an eight-second synthetic AMV in the phone's Downloads (or in Termux home if the shared storage link is absent). Copy that clip to the player and test playback. If the model needs a different profile, supply `--profile amv-128x128` or `--profile mp4-320x240` and test again.
 
 Only after a sample plays on the **physical** unit, a locally downloaded movie can be previewed via `python "$HOME/ruizu-video.py" --input "$HOME/storage/downloads/Movie.mp4" --profile amv-160x128` (20-second preview) or converted in full with `--full`. This script does not download from Drive; download the file from your own Drive to the phone first. No DRM bypass is provided. The script writes outside the player and refuses existing output names.
+
+
+### One film on the RUIZU (Termux)
+
+The one-film helper uses the existing media player mount (`/mnt/media_rw/0000-006F/VIDEO`) and converts a **locally downloaded** `Wreck It Ralph (2012).mp4` to `160 × 128` AMV video with mono ADPCM audio. The exact RUIZU model has not been confirmed: the player's sample `All DX.avi` is associated with X02 devices, but that is not conclusive. This is a format trial, not a playback guarantee.
+
+1. In the signed-in Google Drive app, select your own film and choose **Download** to put it in the phone's Downloads folder. No private Drive file links or authorisation tokens are stored in this public repository.
+2. In Termux, run the command below (only when the MP4 download has finished):
+
+```sh
+pkg install -y python ffmpeg curl && curl -fL https://raw.githubusercontent.com/Parris-Tech-Services/JoshBooksOnline/main/tools/ruizu-drive-compare/one_movie.py -o ~/ruizu-movie.py && python ~/ruizu-movie.py
+```
+
+The helper checks the original video's format, preserves source media, encodes one 160×128 AMV locally in Downloads, validates the resulting codecs, then copies to `VIDEO/` **only if** that directory is mounted and writable. Copy is create-only and SHA-256 verified; existing destinations are never overwritten, and partial newly-created target files are cleaned up on failure. With no writable USB mount the finished AMV remains in Downloads to transfer manually. Real hardware playback needs a test on the unit.
+
+Synthetic smoke tests: `python -m unittest test_one_movie.py -v` (needs FFmpeg). A 1.2-second source converts and is copied to a simulated player with matching hashes.
