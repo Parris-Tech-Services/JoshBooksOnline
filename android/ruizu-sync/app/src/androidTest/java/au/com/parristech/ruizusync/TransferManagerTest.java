@@ -36,4 +36,26 @@ public final class TransferManagerTest {
             catch(IllegalArgumentException expected){}
         } finally {manager.removeListener(listener); source.delete();}
     }
+    @Test public void convertedAmvUsesExistingVerifiedSafTransferIntoVideo() throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        context.getContentResolver().call(Uri.parse("content://" + FakeUsbProvider.AUTHORITY),"reset",null,null);
+        File source=new File(context.getCacheDir(),"playable-film.amv");
+        try(FileOutputStream out=new FileOutputStream(source)){out.write(new byte[]{4,5,6,7,8});}
+        SourceItem item=new SourceItem(Uri.fromFile(source),"playable-film.amv",5,
+                "video/x-amv","",null,null);
+        Uri tree=DocumentsContract.buildTreeDocumentUri(FakeUsbProvider.AUTHORITY,"root");
+        TransferManager manager=TransferManager.get(context);
+        CountDownLatch finished=new CountDownLatch(1);
+        TransferManager.Listener listener=snapshot->{if(snapshot.isFinished() && !snapshot.running)finished.countDown();};
+        manager.addListener(listener);
+        try {
+            manager.start(new TransferManager.Request(Collections.singletonList(item),tree,
+                    FolderPlanner.OrganiseMode.ARTIST_ALBUM,DuplicateMode.SKIP_EXACT));
+            assertTrue("AMV transfer did not finish",finished.await(20,TimeUnit.SECONDS));
+            assertEquals(manager.snapshot().status,1,manager.snapshot().copied);
+            assertEquals(0,manager.snapshot().failed);
+            assertTrue("AMV must go into VIDEO",manager.snapshot().log.toString().contains("→ VIDEO"));
+            assertTrue("Must use SHA-256 readback",manager.snapshot().log.toString().contains("SHA-256 verified"));
+        } finally {manager.removeListener(listener); source.delete();}
+    }
 }
