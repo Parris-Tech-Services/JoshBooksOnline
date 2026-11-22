@@ -444,13 +444,18 @@ public final class TransferManager {
 
         String artist = null;
         String album = null;
-        if (request.organiseMode == FolderPlanner.OrganiseMode.ARTIST_ALBUM) {
+        if (!MediaTypes.isConvertedVideo(item.displayName)
+                && request.organiseMode == FolderPlanner.OrganiseMode.ARTIST_ALBUM) {
             SourceRepo.TrackTags tags = sourceRepo.readTags(item.uri);
             artist = tags.artist;
             album = tags.album;
         }
-        List<String> segments = FolderPlanner.folderSegments(request.organiseMode, artist, album,
-                item.sourceFolder, item.treeRelDirs, request.destinationPrefix);
+        // AMV is a video, not music: always route it to the standard VIDEO folder
+        // under the chosen player ROOT, regardless of audio organisation settings.
+        List<String> segments = MediaTypes.isConvertedVideo(item.displayName)
+                ? Collections.singletonList("VIDEO")
+                : FolderPlanner.folderSegments(request.organiseMode, artist, album,
+                        item.sourceFolder, item.treeRelDirs, request.destinationPrefix);
         DestRepo.Node targetDir = destRepo.ensureDir(segments);
         folderNodes.put(targetDir.relPath.toLowerCase(Locale.ROOT), targetDir);
 
@@ -535,10 +540,13 @@ public final class TransferManager {
             return;
         }
         stats.finishFile(TransferStats.Outcome.COPIED);
-        copiedPaths.add(result.node.relPath);
+        if (!MediaTypes.isConvertedVideo(item.displayName)) {
+            // Video files should not appear in generated audio playlists.
+            copiedPaths.add(result.node.relPath);
+            foldersTouched.add(targetDir.relPath.toLowerCase(Locale.ROOT));
+        }
         index.add(new DestEntry(result.node.relPath, result.node.name, result.bytes));
         nodesByPath.put(result.node.relPath.toLowerCase(Locale.ROOT), result.node);
-        foldersTouched.add(targetDir.relPath.toLowerCase(Locale.ROOT));
         if (remainingFreeBytes > 0) {
             remainingFreeBytes = Math.max(0, remainingFreeBytes - result.bytes);
         }
