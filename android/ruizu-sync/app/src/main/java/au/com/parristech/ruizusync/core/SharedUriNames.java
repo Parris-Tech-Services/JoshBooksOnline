@@ -89,7 +89,8 @@ public final class SharedUriNames {
             String id = isBareRowId(provided) ? provided.trim()
                     : (isBareRowId(lastPathSegment) ? lastPathSegment.trim() : "");
             String suffix = id.isEmpty() ? "" : " " + id;
-            return new Resolved(FALLBACK_STEM + suffix + "." + extension, false, true, true);
+            String stem = "amv".equals(extension) ? "Shared video" : FALLBACK_STEM;
+            return new Resolved(stem + suffix + "." + extension, false, true, true);
         }
 
         if (!provided.isEmpty()) {
