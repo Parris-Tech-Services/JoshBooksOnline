@@ -101,6 +101,9 @@ public final class MediaTypes {
             normalized = normalized.substring(0, semicolon).trim();
         }
         switch (normalized) {
+            case "video/x-amv":
+            case "video/amv":
+                return "amv";
             case "audio/mpeg":
             case "audio/mp3":
             case "audio/mpeg3":
