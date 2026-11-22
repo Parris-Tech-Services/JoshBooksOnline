@@ -65,7 +65,13 @@ public final class SafTransfer {
     public boolean transfer(InputStream source, Uri tree, String rawName, long size,
                             VerifiedCopy.Progress progress) throws Exception {
         String name = TransferUtils.safeName(rawName);
-        if (!TransferUtils.isSupportedAudio(name)) throw new IOException("Unsupported audio filename");
+        // The hardware-tested .amv video profile uses the same journalled,
+        // SHA-256-verified writer as audio. Reject original MP4/MKV formats;
+        // only ready-to-play AMV can bypass the audio-only filename guard.
+        if (!TransferUtils.isSupportedAudio(name)
+                && !au.com.parristech.ruizusync.core.MediaTypes.isConvertedVideo(name)) {
+            throw new IOException("Unsupported RUIZU media filename");
+        }
         if (size > VerifiedCopy.MAX_BYTES) throw new IOException("File exceeds FAT32 4 GiB limit");
         VerifiedCopy.checkCancelled(cancelled);
         recover(tree);
