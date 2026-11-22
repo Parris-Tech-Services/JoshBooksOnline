@@ -87,6 +87,7 @@ public final class MainActivity extends Activity implements TransferManager.List
     private static final int REQ_DEST_TREE = 1003;
     private static final int REQ_IMPORT_OPML = 1004;
     private static final int REQ_EXPORT_OPML = 1005;
+    private static final int REQ_ADD_AMV = 1006;
     private static final int REQ_NOTIFICATIONS = 2001;
     private static final int MAX_AUTO_DOWNLOADS = 5;
     private static final int MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT;
@@ -243,6 +244,14 @@ public final class MainActivity extends Activity implements TransferManager.List
         folderParams.leftMargin = dp(8);
         sourceButtons.addView(addFolderButton, folderParams);
         sourceCard.addView(sourceButtons);
+        sourceCard.addView(secondaryButton("Add converted AMV movie", v -> pickConvertedMovie()),
+                margins(0, dp(8), 0, 0));
+        TextView videoHelp = label("Movies: select an AMV converted to 160×128 / 15 fps. "
+                + "RUIZU Sync will safely copy it into VIDEO on the player. "
+                + "For a film in Google Drive, use the RUIZU Movie phone shortcut to convert it first.",
+                12, false);
+        videoHelp.setTextColor(getColor(R.color.text_muted));
+        sourceCard.addView(videoHelp, margins(0, dp(6), 0, 0));
         sourceSummary = label("No files selected", 13, false);
         sourceSummary.setTextColor(getColor(R.color.text_muted));
         sourceCard.addView(sourceSummary, margins(0, dp(10), 0, 0));
@@ -818,6 +827,23 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
     }
 
+    private void pickConvertedMovie() {
+        if (manager.isRunning() || busy) {
+            toast("Finish the current transfer first");
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("*/*")
+                .putExtra(Intent.EXTRA_MIME_TYPES,
+                        new String[]{"video/x-amv", "application/octet-stream"});
+        try {
+            startActivityForResult(intent, REQ_ADD_AMV);
+        } catch (ActivityNotFoundException e) {
+            toast("No file picker available");
+        }
+    }
+
     private void pickSourceFolder() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -861,6 +887,10 @@ public final class MainActivity extends Activity implements TransferManager.List
             return;
         }
         if (requestCode == REQ_ADD_FILES) {
+            addPickedFiles(collectUris(data));
+        } else if (requestCode == REQ_ADD_AMV) {
+            // The picker MIME type is a hint only; SourceItem + MediaTypes validates
+            // the actual filename, rejecting unconverted MP4/MKV selections.
             addPickedFiles(collectUris(data));
         } else if (requestCode == REQ_ADD_FOLDER) {
             Uri tree = data.getData();
@@ -1135,7 +1165,7 @@ public final class MainActivity extends Activity implements TransferManager.List
     private void startTransfer() {
         List<SourceItem> sources = state.sources();
         if (sources.isEmpty()) {
-            toast("Add some music or podcasts first");
+            toast("Add music, podcasts or a converted AMV first");
             return;
         }
         Uri dest = state.destinationTree();
