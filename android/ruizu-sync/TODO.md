@@ -1,6 +1,6 @@
 # RUIZU Sync feature to-do list
 
-Status: **living implementation and validation backlog** (reviewed 21 November 2026). Items 1–11 retain their original numbers and full acceptance criteria. Items 12–27 record outstanding verification, usability and release work. An unchecked item may already be implemented in code; it means its full acceptance criteria have **not** been independently verified. Never infer completion from a passing build alone.
+Status: **living implementation and validation backlog** (reviewed 21 November 2026). Items 1–11 retain their original numbers and full acceptance criteria. Items 12–28 record outstanding verification, usability and release work. An unchecked item may already be implemented in code; it means its full acceptance criteria have **not** been independently verified. Never infer completion from a passing build alone.
 
 Purpose: make RUIZU Sync a trustworthy music, podcast and audiobook manager, using the existing SAF transfer manager and verified writer. **This file is a tracking document, not evidence that any task was implemented by a documentation change.**
 
@@ -22,7 +22,7 @@ Items #8 and #12 meet their full listed acceptance criteria. Unchecked items ret
 | 10 | **NOT COMPLETE** | Verified device artwork profile, copy-only embedding/resizing and malformed-image/player-display acceptance remain. |
 | 11 | **PARTIALLY COMPLETE** | Safe-removal guidance exists; actual Samsung eject and all active-I/O/lifecycle states remain unverified (see 23). |
 | 12 | **VERIFIED COMPLETE** | Latest run: 25 emulator instrumentation tests passed, none skipped; evidence linked below. |
-| 13 | **PARTIALLY COMPLETE** | Historical physical inventory reported; reconcile app totals with an independent current scan and account for every change. No new physical scan was performed here. |
+| 13 | **PARTIALLY COMPLETE** | Independent physical scan captured and every change accounted for (see evidence below): the 1,617 → 1,637 rise was the 8 delivered bundle files plus 12 copies of `/sdcard/Music` content, 11 byte-identical and 1 a real `.m4a`→`.mp3` conversion. Remaining: reconcile those totals against the app's **own** inventoried numbers in one session. |
 | 14 | **PARTIALLY COMPLETE** | Read-only comparator and offline review shipped in PRs #22/#26; real source-to-player reconciliation and missing-only transfer remain unverified. |
 | 15 | **NOT COMPLETE** | Reliable grouping, independent album tracklists and real incomplete-album comparison remain. |
 | 16 | **NOT COMPLETE** | Real local/Drive picker, nested trees, offline/revoked permissions and restart-to-USB transfer acceptance remain. |
@@ -37,6 +37,7 @@ Items #8 and #12 meet their full listed acceptance criteria. Unchecked items ret
 | 25 | **NOT COMPLETE** | Same remaining normalisation/artwork work as 9 and 10; not a basic-transfer release blocker. |
 | 26 | **NOT COMPLETE** | Optional scheduling, download preferences, multiple plans, richer browsing and lifecycle/job migration remain. |
 | 27 | **PARTIALLY COMPLETE** | Signed 1.2.6 APK delivered; automated verification passed. Final physical acceptance and public release notes/download publication remain to confirm. |
+| 28 | **NOT COMPLETE** | Not built: video is entirely outside the app, which is audio-only. The player's video format was characterised from its own vendor sample and a hand-built test clip plus one feature film were copied to `VIDEO/`; **playback on the player is unconfirmed**. |
 
 ## Latest implementation evidence: 1.2.6
 
@@ -107,13 +108,18 @@ Evidence from the actual Samsung Galaxy A55 + RUIZU session (reported by the dev
 - The app already includes source selection, folder organisation, RSS/Atom browsing, HTTPS links, podcast subscriptions/download preparation, playlists/OPML, saved plan, transfer history, retry, MP3 conversion, read-only library audit and eject **guidance**. Do not rebuild these from scratch or mark them finished on presence alone.
 - Previous installer verification (historical): **1.2.4 / versionCode 8**, package `au.com.parristech.ruizusync`, release certificate SHA-256 `d16afeee87dd25be0421223d748ab175cbb37b4c5152042933342cc5880307b4`. APK SHA-256 `1e5802bb6abc7071c798257b4f74ad90c52a18e73726c2e93fab9c52e16bb212`; source PR #28 / merge `fd5c3e789eeabb0e87d96c47417925c8b1499178`. Package/version and signing passed CI; the downloaded installer certificate was independently checked. Physical installation, preservation of saved settings/SAF grants and transfer on 1.2.4 remain unverified. Any legacy `.stable` migration still needs separate evidence.
 
-## Numbered validation and completion backlog (12–27)
+## Numbered validation and completion backlog (12–28)
 
 The original feature items 1–11 above remain the authoritative feature-specific acceptance criteria. These additional numbers capture the **outstanding work identified from the real-device audit** and should be completed in priority order. **Do not mark an item complete until its evidence and state are linked.**
 
 12. [x] **Execute all existing Android SAF instrumentation tests in CI.** Run `SafTransferTest`, `DestinationAccessTest`, `TransferManagerTest` and `MainActivityTest` against the test-only `FakeUsbProvider` on an API 34 emulator. Keep the `safTest` test-only provider isolated from the distributed APK; publish actual test counts, failures, logs and artifacts. **VERIFIED COMPLETE:** [PR #27](https://github.com/Parris-Tech-Services/JoshBooksOnline/pull/27) and [PR #28](https://github.com/Parris-Tech-Services/JoshBooksOnline/pull/28) are merged. [CI run 44863422504](https://github.com/Parris-Tech-Services/JoshBooksOnline/actions/runs/44863422504): 21 instrumentation tests, zero failures/errors/skips; [XML and log artifact](https://github.com/Parris-Tech-Services/JoshBooksOnline/actions/runs/44863422504/artifacts/14691185840). Includes the four named suites, MediaStore, shared-name fallback and actual cross-app grant tests. Done when all suites run, pass, and failures are real regressions rather than skipped jobs.
 
 13. [ ] **Prove the read-only inventory on physical RUIZU volume `0000-006F`.** Enumerate supported audio, Music/Podcasts folders, unknown extensions and system files; exclude `.LIB` data from changes. Reconcile the app's inventory with a separate independent scan and demonstrate that all existing files are left untouched. Done when a real inventory report and totals are captured and reconciled.
+
+    - **Independent scan evidence (21 November 2026, volume `0000-006F`, read-only):** the player held **1,617 files (896 audio)** at the start of the session and **1,637** after the delivered bundle. The **+20** was accounted for exactly: **8** delivered files (6 in `Music/RUIZU-Bundle/`, 2 in `Podcasts/RUIZU-Bundle/`, all byte-identical to their sources by SHA-256) and **12** audio files copied from `/sdcard/Music` at 14:13–14:16 — 11 byte-identical to the phone copies and 1 (`Nanna Voice 251010_173929.mp3`) a genuine `.m4a`→`.mp3` conversion, which also demonstrates the transcoder running on the real device.
+    - **No pre-existing file was modified:** files that already existed kept their original timestamps, including both earlier copies of *Marconi Union - Weightless*. The six `.LIB` databases were rewritten **by the player itself** on mount (12:29, then 14:12 on the next plug-in), not by the app.
+    - The app then transferred a further ~355 files into `Music/RUIZU-Bundle/`; the player finished this session at **2,004 files / 28.07 GB used / 36 GB free**. That folder was then organised into typed subfolders by hand, with a reversible move manifest, under the project rule that no file is deleted or overwritten.
+    - **Still open:** the app's *own* inventory totals were never compared against this independent scan in the same session, so the item stays incomplete.
 
 14. [ ] **Demonstrate missing-music and missing-podcast comparison against actual sources.** Select an authorised phone/Drive music folder or podcast download collection, invoke the existing comparison engine, and show `LIKELY_PRESENT`, `POSSIBLE_MATCH`, and `MISSING` with clear caveats. Include true duplicates, same name/different size, and renamed/alternate-format versions. Never classify a track as “missing” without a source catalogue. Done when real reports and missing-only transfer selection are verified without deleting existing tracks.
 
@@ -143,11 +149,17 @@ The original feature items 1–11 above remain the authoritative feature-specifi
 
 27. [ ] **Publish evidence-backed release notes and a verified installable APK.** After changes, require unit tests, all relevant Android instrumentation tests, static signing/manifest validation, emulator install/launch, and specifically named physical-device checks. Publish the precise release build with versionCode/versionName, canonical application ID, signer fingerprint, CI run, PR/commit SHA and a direct APK download link. Clearly separate **VERIFIED COMPLETE**, **PARTIALLY COMPLETE**, and **BLOCKED**; avoid claiming all features or Google Drive support are physically verified until they are.
 
+28. [ ] **Support video/movie transfer for the player's video capability.** Volume `0000-006F` is video-capable: it carries `VIDEO/` and `VIDEO.LIB`, and the vendor-supplied sample `VIDEO/All DX.avi` decodes as **MJPEG, 208×176, 500000/23061 fps (21.68), ADPCM IMA WAV 22.05 kHz mono, ~1.06 Mbps**. RUIZU Sync is audio-only today: `MediaTypes` accepts mp3/wav/flac/wma/ape/aac/m4a/ogg/aiff, there is no video source, no video conversion and no `VIDEO/` destination, so a picked or shared movie is reported as an unsupported format.
+    - Done when: video can be selected and sent through the **existing** journalled verified writer rather than a second transfer engine; conversion targets the codec/resolution/audio above and letterboxes instead of stretching; the quality-versus-size trade-off is stated in the UI; failures, cancellation, partial output and storage exhaustion behave as they already do for audio; existing videos are never overwritten or deleted; and the **player actually plays the converted file** after a system eject and re-mount on the Galaxy A55. Do not claim video support from an encoding that merely matches the sample.
+    - Comparison: **MediaMonkey** and **doubleTwist** both convert media to a device profile during sync; the requirement here is the same idea limited to a verified profile.
+    - **Evidence so far — encoding recipe only, not device acceptance:** a 12-second clip and one full film were produced by hand with `ffmpeg` (`-c:v mjpeg -q:v 6 -pix_fmt yuvj420p -vtag MJPG -r 500000/23061 -c:a adpcm_ima_wav -ar 22050 -ac 1`, scaled and padded to 208×176) and copied to `VIDEO/`, byte-identical on the player. 60 s encoded to 3.17 MB at 422 kbps; the complete 1 h 58 m film encoded to 546 MB at 641 kbps in 5 m 52 s on the A55. **Whether the player decodes them is unconfirmed**, so playback of `VIDEO/PLAYER-TEST.avi` is the next required step, not a formality.
+    - Scale warning before any bulk work: the source movie library sampled for this work is 35 files / 29 GB, which converts to roughly 18 GB (≈3.5 h of encoding) against 36 GB free — a whole-library copy would leave little headroom, so selection is a product decision, not a detail.
+
 ### Suggested order for the next work session
 
 **First:** verify the 1.2.6 upgrade (22), then real sharing (17), selection (16), inventory/comparison (13–14), safe eject/playback (23 → 18), physical recovery (19) and final release evidence (27). Item 12 is complete.
 **Then:** 15, 20, 21, 23, 24 as validation permits.
-**Later:** 25–26 after the existing workflows are reliable.
+**Later:** 25–26 and 28 after the existing workflows are reliable.
 
 ### Acceptance evidence checklist
 
@@ -156,7 +168,7 @@ For every numbered item, record its PR/commit, the exact tests executed and resu
 
 ## Suggested implementation order
 
-**Current priority:** finish **22 → 17 → 16 → 13 → 14 → 23 → 18 → 19 → 27**. Item 12 is complete; rerun its tests when relevant code changes. Legacy feature priorities 1–11 remain for detailed acceptance but should not displace core validation. Saved folder rules (5) are a prerequisite for connection-triggered transfer suggestions (6); saved subscriptions (3) are a prerequisite for useful OPML import/export (8).
+**Current priority:** finish **22 → 17 → 16 → 13 → 14 → 23 → 18 → 19 → 27**. Item 12 is complete; rerun its tests when relevant code changes. Video (28) is deliberately last because it depends on the proven transfer core and on device playback acceptance. Legacy feature priorities 1–11 remain for detailed acceptance but should not displace core validation. Saved folder rules (5) are a prerequisite for connection-triggered transfer suggestions (6); saved subscriptions (3) are a prerequisite for useful OPML import/export (8).
 
 ## Shared completion rules
 
