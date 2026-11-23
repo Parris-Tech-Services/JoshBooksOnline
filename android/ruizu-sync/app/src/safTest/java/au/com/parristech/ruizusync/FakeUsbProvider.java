@@ -23,7 +23,7 @@ public final class FakeUsbProvider extends DocumentsProvider {
     private void connected() throws FileNotFoundException { if(disconnected) throw new FileNotFoundException("USB detached"); }
     @Override public synchronized Bundle call(String method, String argument, Bundle extras) {
         if (!Arrays.asList("reset", "disconnected", "full", "corrupt", "renameFails", "blankNames",
-                "addName", "state").contains(method)) {
+                "addName", "mkTree", "state").contains(method)) {
             return super.call(method, argument, extras);
         }
         if (method.equals("reset")) reset();
@@ -34,6 +34,14 @@ public final class FakeUsbProvider extends DocumentsProvider {
         // Simulates a sender that grants read access but exposes no display name, which is the
         // shape of another app sharing a MediaStore row whose projection is refused.
         if (method.equals("blankNames")) blankNames=Boolean.parseBoolean(argument);
+        // A tree root that exists as a real directory, so a test can address two tree ids on the one
+        // volume id both RUIZU units report. The id itself stays opaque to the provider.
+        if (method.equals("mkTree") && argument != null) {
+            names.put(argument,argument);
+            parents.put(argument,"root");
+            mimeTypes.put(argument,DocumentsContract.Document.MIME_TYPE_DIR);
+            new File(root,argument).mkdirs();
+        }
         if (method.equals("addName") && argument != null) {
             int tab = argument.indexOf('\t');
             if (tab > 0) {
