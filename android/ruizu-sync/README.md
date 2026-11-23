@@ -13,8 +13,12 @@ first revision are preserved and run on top of that engine.
 
 1. Connect the player with its USB cable and unlock the phone. Android mounts it as removable
    storage (USB mass storage / OTG drive) and it appears to the system file picker.
-2. Tap **Use connected USB drive** (or **Choose player folder**). The folder is remembered per
-   volume, so reconnecting the same player restores it automatically.
+2. Tap **Use connected USB drive** (or **Choose player folder**). The app writes a small
+   `.ruizu-sync-device.json` marker into that folder the first time and remembers the folder
+   against the marker, so reconnecting the **same** player restores it automatically. Two players
+   can report the same USB volume id (both units here report `0000-006F`), so when a marker does
+   not match the remembered one the app selects nothing and tells you which unit is connected
+   instead of copying to the wrong player.
 3. Add sources:
    - **Add files** — multi-select audio from phone storage or Google Drive (SAF; Google's
      DocumentsProvider supplies the files).
@@ -58,7 +62,11 @@ written file when a copy fails or is cancelled.
   (including a raw-PCM fast path for WAV) and re-encoded with the pure-Java LAME port (jump3r)
   before copying; the original file is never modified. Failures fall back to copying the original.
 - **Saved transfer plan (folder pair)** — remember source folder → player folder plus all options,
-  run it with one tap, and optionally get asked to run it when the player connects.
+  run it with one tap, and optionally get asked to run it when the player connects. The plan also
+  records which player it was saved for, and refuses to run against a different unit.
+- **Per-player identity** — each player gets a marker file in its chosen folder, and the current
+  player (name plus a short id) is shown above the transfer controls so you can check the
+  destination before pressing Start.
 - **Durable history** — transfer runs are appended to `transfer-history.jsonl` and survive
   restarts; the last three runs and a copyable log are shown in the app.
 - **Resumable downloads** — interrupted HTTPS episode downloads continue from the bytes already on
@@ -99,6 +107,11 @@ MP3 is the safest choice across RUIZU models; check the player manual for APE/OG
 - **USB writes cannot be resumed** mid-file: the Storage Access Framework offers no reliable
   append/offset contract. Only HTTPS downloads resume; interrupted copies restart that one file.
 - One saved plan is supported (one source folder → one player folder).
+- A player whose folder cannot hold the marker (read-only or refusing provider) is reported as
+  **unidentified**. The app then keeps the old volume-only behaviour and does not claim to know
+  which unit is attached.
+- The wrong-player guard has JVM and fake-provider instrumentation coverage, but it has **not**
+  been exercised with both physical RUIZU units attached; that remains a manual check.
 
 ## Build
 

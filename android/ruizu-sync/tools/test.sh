@@ -41,6 +41,8 @@ java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST$LIB_CP" org.junit.
   au.com.parristech.ruizusync.core.LogicGradleTests \
   au.com.parristech.ruizusync.core.OpmlTest \
   au.com.parristech.ruizusync.core.LibraryComparisonTest \
+  au.com.parristech.ruizusync.core.PlayerIdentityTest \
+  au.com.parristech.ruizusync.core.PlayerBindingTest \
   au.com.parristech.ruizusync.net.FeedScannerTest \
   au.com.parristech.ruizusync.net.DownloadResumePolicyTest \
   au.com.parristech.ruizusync.VerifiedCopyTest \

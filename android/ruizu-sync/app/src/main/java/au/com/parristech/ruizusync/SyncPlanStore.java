@@ -23,6 +23,11 @@ public final class SyncPlanStore {
         public final String sourceName;
         public final String destTree;
         public final String destLabel;
+        /**
+         * Marker id of the player this plan's destination was chosen on. Empty for plans saved
+         * before device markers existed, which keeps their original behaviour.
+         */
+        public final String destDeviceId;
         public final List<String> destPrefix;
         public final FolderPlanner.OrganiseMode organise;
         public final DuplicateMode duplicates;
@@ -33,6 +38,7 @@ public final class SyncPlanStore {
         public final boolean enabled;
 
         public Plan(String sourceTree, String sourceName, String destTree, String destLabel,
+                    String destDeviceId,
                     List<String> destPrefix, FolderPlanner.OrganiseMode organise,
                     DuplicateMode duplicates, boolean scopeFolder,
                     boolean playlists, boolean convert, String playlistName, boolean enabled) {
@@ -40,6 +46,7 @@ public final class SyncPlanStore {
             this.sourceName = sourceName == null ? "" : sourceName;
             this.destTree = destTree == null ? "" : destTree;
             this.destLabel = destLabel == null ? "" : destLabel;
+            this.destDeviceId = destDeviceId == null ? "" : destDeviceId.trim();
             this.destPrefix = destPrefix == null ? new ArrayList<>() : new ArrayList<>(destPrefix);
             this.organise = organise == null ? FolderPlanner.OrganiseMode.FLAT : organise;
             this.duplicates = DuplicateMode.safe(duplicates);
@@ -73,7 +80,8 @@ public final class SyncPlanStore {
                 }
             }
             return new Plan(root.optString("sourceTree"), root.optString("sourceName"),
-                    root.optString("destTree"), root.optString("destLabel"), prefix,
+                    root.optString("destTree"), root.optString("destLabel"),
+                    root.optString("destDeviceId", ""), prefix,
                     FolderPlanner.OrganiseMode.valueOf(root.optString("organise", FolderPlanner.OrganiseMode.FLAT.name())),
                     DuplicateMode.fromStoredName(root.optString("duplicates", DuplicateMode.SKIP_FAST.name()),
                             DuplicateMode.SKIP_FAST),
@@ -95,6 +103,7 @@ public final class SyncPlanStore {
             root.put("sourceName", plan.sourceName);
             root.put("destTree", plan.destTree);
             root.put("destLabel", plan.destLabel);
+            root.put("destDeviceId", plan.destDeviceId);
             JSONArray prefix = new JSONArray();
             for (String segment : plan.destPrefix) {
                 prefix.put(segment);
@@ -119,6 +128,7 @@ public final class SyncPlanStore {
             return;
         }
         save(context, new Plan(plan.sourceTree, plan.sourceName, plan.destTree, plan.destLabel,
+                plan.destDeviceId,
                 plan.destPrefix, plan.organise, plan.duplicates, plan.scopeFolder,
                 plan.playlists, plan.convert, plan.playlistName, enabled));
     }

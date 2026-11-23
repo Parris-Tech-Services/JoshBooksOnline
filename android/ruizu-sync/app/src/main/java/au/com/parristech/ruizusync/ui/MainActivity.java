@@ -43,11 +43,13 @@ import au.com.parristech.ruizusync.SyncPlanStore;
 import au.com.parristech.ruizusync.SubscriptionStore;
 import au.com.parristech.ruizusync.PendingTransferStore;
 import au.com.parristech.ruizusync.PlayerFolderStore;
+import au.com.parristech.ruizusync.PlayerMarkerStore;
 import au.com.parristech.ruizusync.R;
 import au.com.parristech.ruizusync.TransferUtils;
 import au.com.parristech.ruizusync.TransferManager;
 import au.com.parristech.ruizusync.TransferService;
 import au.com.parristech.ruizusync.core.ByteFormat;
+import au.com.parristech.ruizusync.core.PlayerBinding;
 import au.com.parristech.ruizusync.core.SourceBuckets;
 import au.com.parristech.ruizusync.core.DestEntry;
 import au.com.parristech.ruizusync.core.LibraryComparison;
@@ -676,6 +678,14 @@ public final class MainActivity extends Activity implements TransferManager.List
             StringBuilder sb = new StringBuilder();
             String label = state.destinationLabel();
             sb.append(label.isEmpty() ? "Player folder selected" : label);
+            String deviceId = state.destinationDeviceId();
+            if (deviceId == null) {
+                sb.append("\nPlayer: unidentified");
+            } else {
+                String deviceName = state.destinationDeviceName();
+                sb.append("\nPlayer: ").append(deviceName == null ? "Player" : deviceName)
+                        .append(" (").append(shortDeviceId(deviceId)).append(")");
+            }
             if (destFreeBytes > 0) {
                 sb.append("\nFree space: ").append(ByteFormat.bytes(destFreeBytes));
             }
@@ -911,8 +921,10 @@ public final class MainActivity extends Activity implements TransferManager.List
             if (tree != null) {
                 takePersistable(tree, false);
                 state.setDestination(tree, "");
-                PlayerFolderStore.remember(this, tree, "");
                 destFreeBytes = -1;
+                // Remembering happens in refreshDestination once the folder has been proven
+                // usable and its player identity read; a folder that fails that check must not
+                // become "the saved player folder".
                 refreshDestination(tree);
                 renderSelections();
             }
@@ -1012,6 +1024,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             String label = "";
             long free = -1;
             Throwable error = null;
+            PlayerMarkerStore.Reading identity = PlayerMarkerStore.Reading.unidentified();
             try {
                 SourceRepo repo = new SourceRepo(appContext);
                 label = repo.treeDisplayName(treeUri);
@@ -1020,12 +1033,14 @@ public final class MainActivity extends Activity implements TransferManager.List
                 if (!destRepo.rootName().isEmpty()) {
                     label = destRepo.rootName();
                 }
+                identity = PlayerMarkerStore.ensure(appContext, treeUri, label);
             } catch (Throwable t) {
                 error = t;
             }
             final String finalLabel = label;
             final long finalFree = free;
             final Throwable finalError = error;
+            final PlayerMarkerStore.Reading finalIdentity = identity;
             mainHandler.post(() -> {
                 if (isFinishing()) {
                     return;
@@ -1037,10 +1052,16 @@ public final class MainActivity extends Activity implements TransferManager.List
                     toast("Cannot use that folder: " + describe(finalError));
                     return;
                 }
-                state.setDestination(treeUri, finalLabel);
-                PlayerFolderStore.remember(this, treeUri, finalLabel);
+                state.setDestination(treeUri, finalLabel, finalIdentity.deviceId(),
+                        finalIdentity.deviceName());
+                PlayerFolderStore.remember(this, treeUri, finalLabel, finalIdentity.deviceId());
                 destFreeBytes = finalFree;
                 renderSelections();
+                if (!finalIdentity.identified()) {
+                    // Only the failure needs saying out loud; a successful identification is
+                    // already visible above the transfer controls.
+                    toast(describeUnidentified(finalIdentity));
+                }
             });
         });
     }
@@ -1204,7 +1225,7 @@ public final class MainActivity extends Activity implements TransferManager.List
                 sources, dest, state.organiseMode(), state.duplicateMode(),
                 state.duplicatesInTargetFolderOnly(),
                 state.writePlaylists(), "", null, state.convertToMp3(), null);
-        PlayerFolderStore.remember(this, dest, state.destinationLabel());
+        PlayerFolderStore.remember(this, dest, state.destinationLabel(), state.destinationDeviceId());
         try {
             manager.start(request);
         } catch (RuntimeException e) {
@@ -1859,7 +1880,8 @@ public final class MainActivity extends Activity implements TransferManager.List
         }
         Uri sourceTree = trees.get(0);
         SyncPlanStore.Plan plan = new SyncPlanStore.Plan(sourceTree.toString(), "",
-                dest.toString(), state.destinationLabel(), Collections.<String>emptyList(),
+                dest.toString(), state.destinationLabel(), state.destinationDeviceId(),
+                Collections.<String>emptyList(),
                 state.organiseMode(), state.duplicateMode(),
                 state.duplicatesInTargetFolderOnly(), state.writePlaylists(), false, "",
                 planEnabledCheck != null && planEnabledCheck.isChecked());
@@ -1879,6 +1901,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             return;
         }
         setBusy(true, "Running the saved plan…");
+        final Context appContext = getApplicationContext();
         ioExecutor.execute(() -> {
             try {
                 List<SourceItem> items = new ArrayList<>();
@@ -1886,15 +1909,29 @@ public final class MainActivity extends Activity implements TransferManager.List
                     SourceRepo.Listing listing = new SourceRepo(this).scanTree(Uri.parse(plan.sourceTree));
                     items.addAll(listing.items);
                 }
+                final PlayerMarkerStore.Reading identity =
+                        PlayerMarkerStore.read(appContext, Uri.parse(plan.destTree));
                 mainHandler.post(() -> {
                     setBusy(false, null);
+                    if (isFinishing()) {
+                        return;
+                    }
+                    // The plan remembers which player it was saved for; refuse to run it on
+                    // another unit that happens to share the same volume id.
+                    PlayerBinding.Restore restore =
+                            PlayerBinding.decide(false, plan.destDeviceId, identity.deviceId());
+                    if (!PlayerBinding.allowsAutomaticReuse(restore)) {
+                        toast(describeRefusedPlan(plan, identity));
+                        return;
+                    }
                     if (items.isEmpty()) {
                         toast("The saved source folder has no supported audio");
                         return;
                     }
                     state.addSources(items);
                     Uri dest = Uri.parse(plan.destTree);
-                    state.setDestination(dest, plan.destLabel);
+                    state.setDestination(dest, plan.destLabel, identity.deviceId(),
+                            identity.deviceName());
                     state.setOrganiseMode(plan.organise);
                     state.setDuplicateMode(plan.duplicates);
                     state.setDuplicatesInTargetFolderOnly(plan.scopeFolder);
@@ -1930,6 +1967,19 @@ public final class MainActivity extends Activity implements TransferManager.List
         if (planEnabledCheck != null) {
             planEnabledCheck.setChecked(plan.enabled);
         }
+    }
+
+    private String describeRefusedPlan(SyncPlanStore.Plan plan, PlayerMarkerStore.Reading identity) {
+        String remembered = plan.destLabel.isEmpty() ? "a different player" : plan.destLabel;
+        if (!plan.destDeviceId.isEmpty()) {
+            remembered = remembered + " (" + shortDeviceId(plan.destDeviceId) + ")";
+        }
+        String connected = identity.identified()
+                ? describeIdentity(identity)
+                : "an unidentified player";
+        return "This plan belongs to " + remembered + ", but " + connected + " is connected."
+                + " Nothing was copied. Reconnect the right player, or choose the player folder"
+                + " and save the plan again.";
     }
 
     private void maybeOfferPlan() {
@@ -2125,19 +2175,87 @@ public final class MainActivity extends Activity implements TransferManager.List
         for (UsbVolumes.Info info : usbVolumes) {
             String uuid = info.volume.getUuid();
             String key = uuid == null || uuid.isEmpty() ? "primary" : uuid;
-            String stored = PlayerFolderStore.treeForVolume(this, key);
-            if (stored == null) {
+            PlayerFolderStore.Restore restore = PlayerFolderStore.evaluateRestore(this, key);
+            if (restore == null || !restore.permissionHeld) {
                 continue;
             }
-            Uri tree = Uri.parse(stored);
-            if (!PlayerFolderStore.hasPersistedPermission(this, tree)) {
-                continue;
+            if (!PlayerBinding.allowsAutomaticReuse(restore.decision)) {
+                // Both players report the same volume id, so the remembered folder is not
+                // evidence that this is the same unit. Select nothing and say so plainly.
+                state.clearDestination();
+                renderSelections();
+                showDifferentPlayerDialog(restore, info.label);
+                return;
             }
-            state.setDestination(tree, info.label);
-            refreshDestination(tree);
-            toast("Using your saved player folder on " + info.label);
+            String label = restore.label.isEmpty() ? info.label : restore.label;
+            state.setDestination(restore.treeUri, label, restore.connectedDeviceId,
+                    restore.connectedDeviceName);
+            refreshDestination(restore.treeUri);
+            toast(restore.decision == PlayerBinding.Restore.MATCH
+                    ? "Using your saved player folder on " + describeConnectedPlayer(restore)
+                    : "Using your saved player folder on " + label);
             return;
         }
+    }
+
+    /**
+     * Tells the user which unit is attached and which one the phone remembers. Nothing is
+     * selected, so the wrong player cannot receive a transfer that was planned for the other one.
+     */
+    private void showDifferentPlayerDialog(PlayerFolderStore.Restore restore, String volumeLabel) {
+        String message = describeRefusedRestore(restore, volumeLabel);
+        new AlertDialog.Builder(this)
+                .setTitle("A different player is connected")
+                .setMessage(message)
+                .setPositiveButton("Choose player folder", (dialog, which) -> chooseDestination(null))
+                .setNegativeButton("Not now", null)
+                .show();
+    }
+
+    private static String describeConnectedPlayer(PlayerFolderStore.Restore restore) {
+        String name = restore.connectedDeviceName == null ? "Player" : restore.connectedDeviceName;
+        return name + " (" + shortDeviceId(restore.connectedDeviceId) + ")";
+    }
+
+    private static String describeRefusedRestore(PlayerFolderStore.Restore restore, String volumeLabel) {
+        String connected;
+        if (restore.connectedDeviceId != null) {
+            connected = describeConnectedPlayer(restore);
+        } else if (restore.connectedState == PlayerMarkerStore.State.MALFORMED) {
+            connected = "a player whose identity file cannot be understood";
+        } else {
+            connected = "a player with no readable identity";
+        }
+        String remembered = restore.storedLabel.isEmpty() ? "another player" : restore.storedLabel;
+        if (restore.storedDeviceId != null) {
+            remembered = remembered + " (" + shortDeviceId(restore.storedDeviceId) + ")";
+        }
+        String volume = volumeLabel == null || volumeLabel.isEmpty() ? "this volume" : volumeLabel;
+        return "The phone remembers a player folder for " + remembered
+                + ", but " + connected + " is attached on " + volume + "."
+                + "\n\nThey share the same volume id, so they cannot be told apart by the"
+                + " mount point alone. Nothing has been selected and no transfer will start."
+                + "\n\nChoose the player folder again to use this player.";
+    }
+
+    private static String describeIdentity(PlayerMarkerStore.Reading reading) {
+        String name = reading.deviceName() == null ? "Player" : reading.deviceName();
+        return name + " (" + shortDeviceId(reading.deviceId()) + ")";
+    }
+
+    private String describeUnidentified(PlayerMarkerStore.Reading reading) {
+        if (reading.state == PlayerMarkerStore.State.MALFORMED) {
+            return "Player folder selected, but its identity file is not readable — player unidentified";
+        }
+        return "Player folder selected, but this player's identity could not be read or written"
+                + " — player unidentified";
+    }
+
+    private static String shortDeviceId(String deviceId) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            return "no id";
+        }
+        return deviceId.length() <= 8 ? deviceId : deviceId.substring(0, 8);
     }
 
     private void applyWindowInsets(View root) {

@@ -27,6 +27,9 @@ public final class AppState {
     private final List<Uri> sourceTrees = new ArrayList<>();
     private Uri destTree;
     private String destLabel = "";
+    /** Marker id of the player the destination was chosen on, or null when unidentified. */
+    private String destDeviceId;
+    private String destDeviceName;
     private FolderPlanner.OrganiseMode organiseMode = FolderPlanner.OrganiseMode.FLAT;
     private DuplicateMode duplicateMode = DuplicateMode.SKIP_FAST;
     private boolean duplicatesInTargetFolderOnly = false;
@@ -78,13 +81,35 @@ public final class AppState {
     }
 
     public synchronized void setDestination(Uri tree, String label) {
+        setDestination(tree, label, null, null);
+    }
+
+    /**
+     * @param deviceId   marker id of the player this folder belongs to, or null when the player
+     *                   could not be identified. Never invented: null means "we do not know".
+     * @param deviceName user-visible name from the same marker.
+     */
+    public synchronized void setDestination(Uri tree, String label, String deviceId, String deviceName) {
         destTree = tree;
         destLabel = label == null ? "" : label;
+        destDeviceId = deviceId == null || deviceId.trim().isEmpty() ? null : deviceId.trim();
+        destDeviceName = deviceName == null || deviceName.trim().isEmpty() ? null : deviceName.trim();
+    }
+
+    /** Marker id of the player the destination was chosen on, or null when unidentified. */
+    public synchronized String destinationDeviceId() {
+        return destDeviceId;
+    }
+
+    public synchronized String destinationDeviceName() {
+        return destDeviceName;
     }
 
     public synchronized void clearDestination() {
         destTree = null;
         destLabel = "";
+        destDeviceId = null;
+        destDeviceName = null;
     }
 
     public synchronized FolderPlanner.OrganiseMode organiseMode() {
