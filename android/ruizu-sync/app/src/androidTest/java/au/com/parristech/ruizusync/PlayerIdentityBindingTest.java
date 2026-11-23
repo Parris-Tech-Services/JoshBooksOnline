@@ -94,15 +94,35 @@ public final class PlayerIdentityBindingTest {
         return null;
     }
 
-    /** Puts a different unit's marker on the volume, as plugging the other player in would. */
+    /**
+     * Puts another unit's marker at the same path, as plugging the other player in would: the tree
+     * keeps exactly one marker file, now carrying a different identity.
+     */
     private void attachPlayerWithIdentity(Uri tree, PlayerIdentity identity) throws Exception {
+        replaceMarker(tree, identity.toJson());
+    }
+
+    /**
+     * Replaces the marker file's contents through the provider. Delete-then-create rather than an
+     * in-place write, because a DocumentsProvider only truncates when the mode asks for it and this
+     * test must not depend on that detail.
+     */
+    private void replaceMarker(Uri tree, String content) throws Exception {
         String docId = markerDocId(tree);
         assertNotNull("the test needs an existing marker to replace", docId);
         Uri doc = DocumentsContract.buildDocumentUriUsingTree(tree, docId);
-        try (OutputStream out = resolver.openOutputStream(doc, "w")) {
+        assertTrue(DocumentsContract.deleteDocument(resolver, doc));
+
+        Uri treeRoot = DocumentsContract.buildDocumentUriUsingTree(
+                tree, DocumentsContract.getTreeDocumentId(tree));
+        Uri created = DocumentsContract.createDocument(resolver, treeRoot, "application/json",
+                PlayerIdentity.MARKER_FILE_NAME);
+        assertNotNull("the marker could not be recreated", created);
+        try (OutputStream out = resolver.openOutputStream(created, "w")) {
             assertNotNull(out);
-            out.write(identity.toJson().getBytes(StandardCharsets.UTF_8));
+            out.write(content.getBytes(StandardCharsets.UTF_8));
         }
+        assertNotNull(markerDocId(tree));
     }
 
     private String readMarker(Uri tree) throws Exception {
@@ -238,11 +258,7 @@ public final class PlayerIdentityBindingTest {
         PlayerFolderStore.remember(context, player, "Josh's RUIZU", created.deviceId());
 
         String garbage = "this is not a marker";
-        Uri doc = DocumentsContract.buildDocumentUriUsingTree(player, markerDocId(player));
-        try (OutputStream out = resolver.openOutputStream(doc, "w")) {
-            assertNotNull(out);
-            out.write(garbage.getBytes(StandardCharsets.UTF_8));
-        }
+        replaceMarker(player, garbage);
 
         PlayerMarkerStore.Reading reading = PlayerMarkerStore.read(context, player);
         assertEquals(PlayerMarkerStore.State.MALFORMED, reading.state);
