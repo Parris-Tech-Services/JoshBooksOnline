@@ -265,6 +265,9 @@ public final class TransferManager {
 
     public void start(Request request) {
         synchronized (this) {
+            if (au.com.parristech.ruizusync.episode.EpisodeQueue.isWriting()) {
+                throw new IllegalStateException("Video queue is writing to the player; wait until it finishes");
+            }
             if (running) {
                 throw new IllegalStateException("A transfer is already running");
             }
