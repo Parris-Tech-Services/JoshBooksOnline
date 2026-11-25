@@ -75,3 +75,31 @@ stage; do not claim byte-range resume. Full legacy import and show-policy contro
 beyond approved source folders remain to be integrated after inspecting the other
 pipeline's actual schema and code. Cross-app mutual exclusion cannot be guaranteed
 by an in-process lock; the ownership handover above is mandatory.
+
+## Integration update — N3
+
+Claude's PR #48 passed all Android CI jobs and has been merged into this integration
+branch (not main). Native queue schema v5 now records source approvals, canonical
+episode labels, per-player caps, shared Drive folder frontiers and imported history.
+The queue uses the shared EpisodePlan core, reconciles existing names as present
+(not hash-verified), respects removed labels, and uses one staged artifact per
+source. Existing conflicting media is retained, not automatically repaired.
+
+Shared Google Drive show links may be explicitly approved per player. The native
+reader uses the embedded folder listing, caches each folder independently (weekly
+TTL, 40 listings per run), refuses non-media responses and off-domain redirects,
+and resumes only when a strong validator and exact content range match. Shared-link
+access and unmetered connectivity are required; private authenticated Drive folders
+and resource-key links are not supported by this adapter. SAF remains available.
+
+The private export format from #49 can be selected in the app after the old writer
+has stopped. Only the selected, previously bound marker's historical copy labels
+and cap are imported. Prior verification is recorded as historical, not as a native
+readback. No source access is granted automatically; re-approve intended shows.
+Actual staged files and allowlists are not migrated automatically. No physical
+device data was accessed or modified during this work.
+
+Automatic writes now require successful descriptor sync; a CLI partial file blocks
+a native write. This is not a cross-app lock. Keep the existing single-writer
+handover rule. CI and physical acceptance on the exact new integration head
+remain mandatory.
