@@ -19,8 +19,9 @@ from .support import FakeClock, FakeDrive, OfflineTermux, Sandbox, needs_tools, 
 SHOWS = ("Glee", "Scrubs", "Girls")
 
 
-@needs_tools
-class PipelineTest(unittest.TestCase):
+class PipelineFixture(unittest.TestCase):
+    """A fake Drive with three shows of two episodes, and a claimed player. No tests of its own."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.drive = FakeDrive().__enter__()
@@ -56,6 +57,9 @@ class PipelineTest(unittest.TestCase):
     def downloads_of(self, label: str) -> int:
         return self.drive.count("download", self.ids[label])
 
+
+@needs_tools
+class PipelineTest(PipelineFixture):
     # ---- the main promise ---------------------------------------------
     def test_first_run_discovers_prepares_and_copies_one_of_each_allowed_show(self):
         report = self.run_once()

@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 from .process import Runner
@@ -27,6 +29,38 @@ ENCODE_ARGS = [
     "-r", str(FPS), "-c:v", "amv", "-c:a", "adpcm_ima_amv", "-block_size", "1470",
     "-ar", "22050", "-ac", "1", "-threads", "4", "-f", "amv",
 ]
+
+
+HEADER_SCAN_BYTES = 4096
+TRUNCATION_TOLERANCE_FRAMES = FPS  # the header length is whole seconds
+
+
+@dataclass(frozen=True)
+class AmvCheck:
+    status: str  # "ok", "truncated", "unverifiable" (no length in the header), "wrong_profile", "unreadable"
+    frames: int
+    header_seconds: int | None
+    detail: str = ""
+
+
+def header_seconds(path: Path) -> int | None:
+    """Length recorded in the AMV header: the last four bytes of the 'amvh' chunk are seconds,
+    minutes and hours, written by ffmpeg's muxer when the file is finished. A file cut short
+    keeps its header, so this is the length it was meant to have."""
+    with open(path, "rb") as handle:
+        head = handle.read(HEADER_SCAN_BYTES)
+    at = head.find(b"amvh")
+    if at < 0 or at + 8 > len(head):
+        return None
+    size = struct.unpack("<I", head[at + 4 : at + 8])[0]
+    end = at + 8 + size
+    if size < 4 or end > len(head):
+        return None
+    seconds, minutes, hours = head[end - 4], head[end - 3], head[end - 2]
+    if seconds > 59 or minutes > 59:
+        return None
+    total = seconds + 60 * minutes + 3600 * hours
+    return total or None
 
 
 class MediaError(RuntimeError):
@@ -90,6 +124,28 @@ class Media:
         if not result.ok:
             out.unlink(missing_ok=True)
             raise MediaError(f"ffmpeg failed: {result.stderr.strip()[-300:]}")
+
+    def inspect_amv(self, path: Path) -> AmvCheck:
+        """Read-only completeness check of an AMV without any reference copy."""
+        data = self._probe_json(path, "-count_packets", "-show_entries",
+                                "stream=codec_type,codec_name,width,height,sample_rate,channels,nb_read_packets")
+        streams = [s for s in data.get("streams", []) if isinstance(s, dict)]
+        video = [s for s in streams if s.get("codec_type") == "video"]
+        audio = [s for s in streams if s.get("codec_type") == "audio"]
+        if len(video) != 1 or len(audio) != 1:
+            return AmvCheck("unreadable", 0, None, "not a readable video with sound")
+        frames = _as_int(video[0].get("nb_read_packets"))
+        try:
+            _check_profile(video[0], audio[0])
+        except MediaError as exc:
+            return AmvCheck("wrong_profile", frames, None, str(exc))
+        seconds = header_seconds(path)
+        if seconds is None:
+            return AmvCheck("unverifiable", frames, None, "no length recorded in the header")
+        expected = seconds * FPS
+        if frames < expected * COVERAGE - TRUNCATION_TOLERANCE_FRAMES:
+            return AmvCheck("truncated", frames, seconds, f"{frames} of about {expected} frames")
+        return AmvCheck("ok", frames, seconds)
 
     def verify_amv(self, path: Path, source_seconds: float = 0.0) -> None:
         """Raise MediaError unless `path` is the verified AMV profile covering the whole source."""

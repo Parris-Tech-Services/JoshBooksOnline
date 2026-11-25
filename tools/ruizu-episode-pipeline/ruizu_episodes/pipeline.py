@@ -233,7 +233,18 @@ class Pipeline:
             self.say(f"{name} on the player is not this tool's file; left untouched", "warn")
 
     # ---- copy -----------------------------------------------------------
+    def _app_is_copying(self, conn: Connected) -> bool:
+        active, stale = player.app_copies_in_progress(conn.root, self.clock())
+        if stale:
+            self.say(f"ignoring {len(stale)} old RUIZU Sync temporary file(s) in VIDEO; the app removes them itself")
+        if active:
+            self.say("the RUIZU Sync app is copying to this player right now; not copying episodes until it "
+                     "has finished (one writer at a time)", "warn")
+        return bool(active)
+
     def copy_ready(self, conn: Connected, budget: Budget) -> None:
+        if self._app_is_copying(conn):
+            return
         if self.had_at_start is None:
             self.had_at_start = set(self.store.copies(conn.identity.id))
         shows = planner.by_show(self.store.episodes("state IN ('discovered', 'staged')"))
@@ -243,7 +254,7 @@ class Pipeline:
             if not player.is_mounted(conn.root):
                 self.say("player unplugged; stopping copies (nothing half-written is left in VIDEO)", "warn")
                 return
-            if not self._copy_one(conn, ep, budget):
+            if self._app_is_copying(conn) or not self._copy_one(conn, ep, budget):
                 return
 
     def _ensure_hash(self, ep: Episode, staged: Path) -> str | None:
