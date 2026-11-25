@@ -49,4 +49,5 @@ java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST$LIB_CP" org.junit.
   au.com.parristech.ruizusync.audio.Mp3EncoderTest \
   au.com.parristech.ruizusync.core.WavPcmReaderTest \
   au.com.parristech.ruizusync.TransferUtilsTest \
-  au.com.parristech.ruizusync.episode.EpisodeCodecTest
+  au.com.parristech.ruizusync.episode.EpisodeCodecTest \
+  au.com.parristech.ruizusync.core.EpisodePlanTest
