@@ -74,4 +74,35 @@ public final class SafTransferTest {
         try {new SafTransfer(context,()->true).transfer(new ByteArrayInputStream(new byte[]{1}),tree,"other.mp3",1,(n,t)->{});fail();}catch(InterruptedIOException expected){}
         assertEquals(1,control("state",null).getInt("count"));
     }
+
+    @Test public void automaticEpisodeRequiresSuccessfulDurableSync() throws Exception {
+        PlayerMarkerStore.Reading marker=PlayerMarkerStore.ensure(context,tree,"Test player");
+        assertTrue(marker.identified());
+        byte[] bytes={1,2,3,4};
+        SafTransfer writer=new SafTransfer(context,()->false,null,false,marker.deviceId());
+        control("unsyncable","true");
+        try {
+            writer.transfer(new ByteArrayInputStream(bytes),tree,"episode.amv",bytes.length,(n,t)->{});
+            fail("Unsyncable provider published an automatic episode");
+        } catch(IOException expected) {
+            assertTrue(expected.toString(),expected.getMessage().contains("durability sync failed"));
+        }
+        assertEquals(1,control("state",null).getInt("count")); // marker only
+        control("unsyncable","false");
+        assertTrue(writer.transfer(new ByteArrayInputStream(bytes),tree,"episode.amv",bytes.length,(n,t)->{}));
+        assertEquals(2,control("state",null).getInt("count"));
+        assertTrue(control("state",null).getStringArrayList("names").contains("episode.amv"));
+    }
+    @Test public void automaticEpisodeRejectsIncorrectPlayerBeforeCreatingOutput() throws Exception {
+        PlayerMarkerStore.Reading marker=PlayerMarkerStore.ensure(context,tree,"Test player");
+        assertTrue(marker.identified());
+        try {
+            new SafTransfer(context,()->false,null,false,"different-player")
+                .transfer(new ByteArrayInputStream(new byte[]{1}),tree,"episode.amv",1,(n,t)->{});
+            fail("Wrong player accepted");
+        } catch(IOException expected) {
+            assertTrue(expected.getMessage().contains("Correct RUIZU player"));
+        }
+        assertEquals(1,control("state",null).getInt("count"));
+    }
 }
