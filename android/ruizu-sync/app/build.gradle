@@ -12,8 +12,8 @@ android {
         // versionCode must increase for every published build: Android only performs an
         // in-place update (keeping app data and persisted SAF permissions) when the new
         // APK has the same package, the same signing certificate and a higher versionCode.
-        versionCode 11
-        versionName '1.2.7'
+        versionCode 12
+        versionName '1.2.8'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
@@ -71,4 +71,27 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+
+// Bundle both native executables in the canonical APK. Legacy extraction is required for
+// ProcessBuilder to execute these packaged PIE binaries from ApplicationInfo.nativeLibraryDir.
+def episodeNative = layout.buildDirectory.dir('generated/episodeNative')
+def episodeAssets = layout.buildDirectory.dir('generated/episodeAssets')
+def episodeCodecScript = rootProject.file('tools/build-episode-codec.sh')
+android.sourceSets.main.jniLibs.srcDir(episodeNative)
+android.sourceSets.main.assets.srcDir(episodeAssets)
+android.packaging.jniLibs.useLegacyPackaging = true
+android.packaging.jniLibs.keepDebugSymbols.add('**/libruizu_ff*.so')
+
+def buildEpisodeCodec = tasks.register('buildEpisodeCodec', Exec) {
+    inputs.file(episodeCodecScript)
+    outputs.dir(episodeNative)
+    outputs.dir(episodeAssets)
+    commandLine 'bash', episodeCodecScript.absolutePath, episodeNative.get().asFile.absolutePath,
+            episodeAssets.get().asFile.absolutePath, layout.buildDirectory.dir('episode-codec-cache').get().asFile.absolutePath
+}
+tasks.configureEach { task ->
+    if (task.name.matches('merge.*(JniLibFolders|NativeLibs|Assets)')) {
+        task.dependsOn(buildEpisodeCodec)
+    }
 }
