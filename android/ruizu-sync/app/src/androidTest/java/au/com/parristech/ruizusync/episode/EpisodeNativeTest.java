@@ -130,4 +130,28 @@ public class EpisodeNativeTest {
         }
         return ids;
     }
+
+    @Test public void libraryApprovalRequiresKnownTargetAndDifferentStorage() throws Exception {
+        Context c=context();
+        assertTrue(c.getPackageName().endsWith(".saftest"));
+        c.deleteDatabase("video-episodes.db");
+        try(EpisodeQueue q=new EpisodeQueue(c)) {
+            android.content.ContentValues target=new android.content.ContentValues();
+            target.put("id","approved-player");
+            target.put("tree","content://com.android.externalstorage.documents/tree/TEST%3A");
+            target.put("name","Test");
+            assertTrue(q.getWritableDatabase().insert("targets",null,target)>=0);
+            android.net.Uri same=android.net.Uri.parse("content://com.android.externalstorage.documents/tree/TEST%3AVIDEO");
+            android.net.Uri different=android.net.Uri.parse("content://com.android.externalstorage.documents/tree/primary%3AMovies");
+            try { q.addLibrary("approved-player",same); fail("Player source accepted"); }
+            catch(java.io.IOException expected) { assertTrue(expected.getMessage().contains("storage volume")); }
+            try { q.addLibrary("unknown",different); fail("Unknown player accepted"); }
+            catch(java.io.IOException expected) { assertTrue(expected.getMessage().contains("Bind")); }
+            q.addLibrary("approved-player",different);
+            q.addLibrary("approved-player",different);
+            try(android.database.Cursor row=q.getReadableDatabase().rawQuery("SELECT count(*) FROM libraries",null)) {
+                assertTrue(row.moveToFirst()); assertEquals(1,row.getInt(0));
+            }
+        } finally { c.deleteDatabase("video-episodes.db"); }
+    }
 }
