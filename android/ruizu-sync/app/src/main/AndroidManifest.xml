@@ -3,6 +3,7 @@
 
     <!-- Podcast RSS and direct audio links are fetched over HTTPS. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -48,6 +49,12 @@
         </activity>
 
         <activity android:name=".episode.EpisodeActivity" android:exported="false" />
+        <receiver android:name=".episode.EpisodeRuntime$UsbMount" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_MOUNTED" />
+                <data android:scheme="file" />
+            </intent-filter>
+        </receiver>
         <service android:name=".episode.EpisodeRuntime$Scheduled"
             android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
         <service android:name=".episode.EpisodeRuntime$Foreground"
