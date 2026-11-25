@@ -99,6 +99,11 @@ The run writes `.ruizu-sync-run.log` in the player root. Its last line carries t
 **Show last run** displays it; a log without that line is reported as still running, never as a
 finished run.
 
+**Do not run both writers at once.** The app's own transfer and a pipeline run both write into
+`VIDEO/` and nothing takes a lock: neither side recognises the other's in-flight name (the app uses
+`.ruizu-<uuid>.part`, the pipeline uses `.ruizu-partial`), so a transfer started while a pipeline run
+is copying can race it. Start one, let it finish, then start the other.
+
 Not verified on hardware: the Termux `RUN_COMMAND` hand-off and live playback of pipeline-copied
 episodes on either RUIZU unit. The encode profile and the copy method are the ones already proven by
 the earlier scripts.
