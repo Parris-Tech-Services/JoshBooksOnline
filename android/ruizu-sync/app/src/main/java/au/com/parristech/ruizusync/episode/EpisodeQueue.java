@@ -184,35 +184,58 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         }
         return b.length()==0 ? "No episodes queued yet." : b.toString();
     }
-    public void run(BooleanSupplier stopped, int limit, boolean transferOnly) throws Exception {
-        if (!ACTIVE.compareAndSet(false,true)) return;
-        try {
-            if (!work.isDirectory() && !work.mkdirs()) throw new IOException("Cannot create app staging folder");
-            if (!transferOnly) discover(stopped);
-            List<Row> rows = new ArrayList<>();
-            try (Cursor c = getReadableDatabase().rawQuery("SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes WHERE stage!='verified' AND next_retry<=? ORDER BY CASE stage WHEN 'staged' THEN 0 ELSE 1 END, rowid",
+    // Two passes are intentional: a slow or unavailable Drive must never delay a
+    // prepared copy. The download limit applies only to preparation, not to USB.
+    static final String DUE_STAGED_SQL =
+        "SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes " +
+        "WHERE stage='staged' AND next_retry<=? ORDER BY rowid";
+    static final String DUE_PREPARE_SQL =
+        "SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes " +
+        "WHERE stage NOT IN ('staged','verified') AND next_retry<=? " +
+        "ORDER BY CASE WHEN bytes>0 THEN 0 ELSE 1 END,bytes,rowid";
+
+    private List<Row> dueRows(boolean staged) {
+        List<Row> rows=new ArrayList<>();
+        try (Cursor c=getReadableDatabase().rawQuery(staged?DUE_STAGED_SQL:DUE_PREPARE_SQL,
                 new String[]{Long.toString(System.currentTimeMillis())})) {
-                while (c.moveToNext()) rows.add(new Row(c));
-            }
-            int processed = 0;
-            Map<String,Uri> targets = new HashMap<>();
-            for (Row r : rows) {
-                if (stopped.getAsBoolean() || processed>=limit) return;
-                if (!targets.containsKey(r.target)) targets.put(r.target,targetTree(r.target));
-                Uri tree=targets.get(r.target);
-                if (transferOnly && !"staged".equals(r.stage)) continue;
-                if ("staged".equals(r.stage) && tree==null) continue;
-                try {
-                    if (!transferOnly) prepare(r,stopped);
-                    if (tree!=null && !stopped.getAsBoolean()) transfer(r,tree,stopped);
-                } catch (Exception e) {
-                    if (!stopped.getAsBoolean()) {
-                        int attempts=r.attempts+1;
-                        update(r,r.stage,r.sha,message(e),attempts,System.currentTimeMillis()+EpisodeCodec.retryDelay(attempts));
-                    }
+            while(c.moveToNext()) rows.add(new Row(c));
+        }
+        return rows;
+    }
+
+    private void processRows(List<Row> rows,BooleanSupplier stopped,int limit,boolean staged) {
+        int processed=0;
+        for(Row r:rows) {
+            if(stopped.getAsBoolean()||processed>=limit) return;
+            try {
+                // Re-read identity rather than caching a previous USB connection.
+                Uri tree=targetTree(r.target);
+                if(staged&&tree==null) continue;
+                if(!staged) prepare(r,stopped);
+                if(!stopped.getAsBoolean()) {
+                    tree=targetTree(r.target);
+                    if(tree!=null) transfer(r,tree,stopped);
                 }
-                processed++;
+            } catch(Exception e) {
+                if(!stopped.getAsBoolean()) {
+                    int attempts=r.attempts+1;
+                    update(r,r.stage,r.sha,message(e),attempts,System.currentTimeMillis()+EpisodeCodec.retryDelay(attempts));
+                }
             }
+            processed++;
+        }
+    }
+
+    public boolean run(BooleanSupplier stopped,int limit,boolean transferOnly) throws Exception {
+        if(!ACTIVE.compareAndSet(false,true)) return false;
+        try {
+            if(!work.isDirectory()&&!work.mkdirs()) throw new IOException("Cannot create app staging folder");
+            processRows(dueRows(true),stopped,Integer.MAX_VALUE,true);
+            if(!transferOnly&&!stopped.getAsBoolean()) {
+                discover(stopped);
+                if(!stopped.getAsBoolean()) processRows(dueRows(false),stopped,limit,false);
+            }
+            return true;
         } finally { ACTIVE.set(false); }
     }
     private File file(Row r,String extension) { return new File(work,r.id+"-"+r.target+extension); }
@@ -327,7 +350,11 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         try {
             requirePlayer(r,tree); check(stopped);
             File output=file(r,".amv");
-            if(!output.isFile() || !hash(output).equals(r.sha)) throw new IOException("Staged video checksum mismatch");
+            if(!output.isFile() || r.sha==null || !hash(output).equals(r.sha)) {
+                // Do not trap missing/corrupt staging files forever in the USB-only queue.
+                update(r,"queued",null,"Staged video needs preparing again",0,0);
+                throw new IOException("Staged video missing or checksum mismatch; preparation required");
+            }
             DestRepo repo=new DestRepo(context,tree);
             DestRepo.Node dir=repo.findChild(repo.root(),"VIDEO");
             if(dir!=null && !dir.directory) throw new IOException("VIDEO is not a folder");
