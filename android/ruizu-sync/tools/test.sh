@@ -48,4 +48,6 @@ java -cp "$BUILD/classes:$BUILD/test-classes:$JUNIT:$HAMCREST$LIB_CP" org.junit.
   au.com.parristech.ruizusync.VerifiedCopyTest \
   au.com.parristech.ruizusync.audio.Mp3EncoderTest \
   au.com.parristech.ruizusync.core.WavPcmReaderTest \
+  au.com.parristech.ruizusync.core.TermuxSyncRequestTest \
+  au.com.parristech.ruizusync.core.RunLogTailTest \
   au.com.parristech.ruizusync.TransferUtilsTest

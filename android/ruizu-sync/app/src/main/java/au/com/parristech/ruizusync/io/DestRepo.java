@@ -198,6 +198,34 @@ public final class DestRepo {
         }
     }
 
+    /**
+     * A small text document on the player, or null when it is absent, unreadable, a directory, or
+     * larger than {@code maxBytes}. Used to read a run log another process wrote; a document that
+     * grows past the bound while being read is refused rather than half-accepted.
+     */
+    public String readText(Node node, int maxBytes) {
+        if (node == null || node.directory || maxBytes <= 0) {
+            return null;
+        }
+        try (InputStream in = resolver.openInputStream(buildDocUri(node.docId))) {
+            if (in == null) {
+                return null;
+            }
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                if (out.size() + read > maxBytes) {
+                    return null;
+                }
+                out.write(buffer, 0, read);
+            }
+            return out.toString("UTF-8");
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     /** Finds a direct child by name (case-insensitive), or null when absent. */
     public Node findChild(Node dir, String name) throws IOException {
         return childrenFor(dir).get(name.toLowerCase(Locale.ROOT));

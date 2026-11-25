@@ -85,6 +85,19 @@ Each sync gives a player up to `per_show` new episodes of each allowed show, rou
 shows (smaller files first within a round). It also prepares the following episodes so they are
 ready next time.
 
+### Starting a run from the RUIZU Sync app
+
+The Android app's **Sync episodes** button asks Termux to run exactly this command:
+
+```bash
+{ ruizu-episodes run --minutes 7 --quiet; echo "__ruizu-exit:$?"; } > '<player>/.ruizu-sync-run.log' 2>&1
+```
+
+That is the whole of the app's involvement: it starts a run and reads the log back from the player.
+It never copies an episode and keeps no record of what was copied, so `pipeline.db` remains the only
+record and the two cannot disagree. The app needs Termux's `com.termux.permission.RUN_COMMAND` and
+`allow-external-apps=true`; see `android/ruizu-sync/README.md`.
+
 ## Commands
 
 | Command | What it does |

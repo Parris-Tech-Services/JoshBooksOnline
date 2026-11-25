@@ -52,3 +52,7 @@ JoshBooksOnline/
 
 # Release signing material (keystore + passwords) must never be committed
 .keys/
+
+# Python bytecode from the episode pipeline's own test runs
+__pycache__/
+*.pyc
