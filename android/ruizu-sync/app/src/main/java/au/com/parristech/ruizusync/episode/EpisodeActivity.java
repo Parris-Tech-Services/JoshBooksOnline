@@ -41,7 +41,7 @@ public final class EpisodeActivity extends Activity {
         scroll.addView(root);
         TextView title=new TextView(this); title.setText("Video episode queue"); title.setTextSize(24); root.addView(title);
         TextView help=new TextView(this);
-        help.setText("Select a player once, then choose your video library. RUIZU Sync will remember every episode, prepare AMV on the phone, and verify each copy. No Termux or separate app.");
+        help.setText("Bind each player once, then approve only the show folders or videos intended for it. Nothing is discovered outside those sources. RUIZU Sync remembers the queue, prepares AMV and verifies each copy. Stop any other video-sync tools before running this queue.");
         root.addView(help);
         players=new Spinner(this); root.addView(players,new LinearLayout.LayoutParams(-1,-2));
         button(root,"Bind player selected on main screen",()->{
@@ -50,7 +50,7 @@ public final class EpisodeActivity extends Activity {
             Uri tree=app.destinationTree();
             task(q->{ q.bind(id,name,tree); reload(q,id); });
         });
-        button(root,"Choose video library folder",()->pick(true));
+        button(root,"Approve a show or video folder for this player",()->pick(true));
         button(root,"Add individual videos (including Drive)",()->pick(false));
         TextView provider=new TextView(this);
         provider.setText("Cloud providers that do not expose folder access can still supply individual videos via the system picker. Only choose media you are entitled to copy.");
@@ -132,8 +132,8 @@ public final class EpisodeActivity extends Activity {
         }
         if(granted.isEmpty()) return;
         if(request==TREE) {
-            new AlertDialog.Builder(this).setTitle("Queue this library?")
-                .setMessage("All supported videos in this folder and its subfolders will be discovered incrementally for the selected player. Existing media will never be replaced.")
+            new AlertDialog.Builder(this).setTitle("Approve this folder for player "+target.substring(0,Math.min(8,target.length()))+"?")
+                .setMessage("Only approve a folder if every video in it and its subfolders is intended for this player, including future additions. For a restricted player, select each approved show separately, not the entire library. Existing media will never be replaced.")
                 .setNegativeButton("Cancel",null).setPositiveButton("Save library",(d,w)->save(target,granted,true)).show();
         } else save(target,granted,false);
     }
