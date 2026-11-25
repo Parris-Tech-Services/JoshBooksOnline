@@ -35,26 +35,34 @@ if [ ! -f window.xml ]; then
     echo "FAIL: no UI hierarchy dump captured"
     exit 1
 fi
-for needle in "RUIZU Sync" "No files selected" "Choose player folder"; do
-    if grep -qF "text=\"$needle\"" window.xml; then
+# UIAutomator reports visible nodes only. Capture overlapping viewports rather than
+# treating a control below the fold as missing. Require every old control and the
+# new queue entry; do not weaken assertions when layout grows.
+cp window.xml window-top.xml
+mkdir -p smoke-viewports
+cp window.xml smoke-viewports/00.xml
+for n in $(seq 1 24); do
+    adb shell input swipe 540 1450 540 750 350
+    sleep 0.5
+    target=$(printf 'window-scan-%02d.xml' "$n")
+    dump_ui "$target"
+    test -s "$target"
+    cp "$target" "smoke-viewports/$(printf '%02d' "$n").xml"
+    if grep -qF 'text="Start transfer"' "$target" && \
+       grep -qF 'text="Choose player folder"' smoke-viewports/*.xml && \
+       grep -qF 'text="Video episode queue"' smoke-viewports/*.xml; then
+        break
+    fi
+done
+cp "$target" window-scrolled.xml
+for needle in "RUIZU Sync" "No files selected" "Video episode queue" "Choose player folder" "Start transfer"; do
+    if grep -qF "text=\"$needle\"" smoke-viewports/*.xml; then
         echo "ui shows: $needle"
     else
-        echo "FAIL: missing UI text: $needle"
+        echo "FAIL: missing UI text across scanned viewports: $needle"
         exit 1
     fi
 done
-
-echo "== scroll to the transfer controls =="
-adb shell input swipe 540 1600 540 300 200 || true
-sleep 1
-adb shell input swipe 540 1600 540 300 200 || true
-sleep 1
-dump_ui window-scrolled.xml
-if [ -f window-scrolled.xml ] && grep -qF 'text="Start transfer"' window-scrolled.xml; then
-    echo "ui shows: Start transfer"
-else
-    echo "note: Start transfer not captured after scrolling (screen size dependent)"
-fi
 
 echo "== conversion self-test (WAV -> MP3 through MediaExtractor + LAME) =="
 adb logcat -c || true
