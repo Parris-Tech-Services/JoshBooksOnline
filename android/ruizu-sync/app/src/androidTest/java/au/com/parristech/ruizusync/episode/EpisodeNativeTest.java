@@ -100,4 +100,34 @@ public class EpisodeNativeTest {
             }
         } finally { c.deleteDatabase("video-episodes.db"); }
     }
+
+    @Test public void dueRowsSeparateReadyCopiesFromPreparationAndRespectRetry() {
+        Context c=context();
+        assertTrue(c.getPackageName().endsWith(".saftest"));
+        c.deleteDatabase("video-episodes.db");
+        try(EpisodeQueue q=new EpisodeQueue(c)) {
+            android.database.sqlite.SQLiteDatabase db=q.getWritableDatabase();
+            addFixture(db,"large", "queued",900,0);
+            addFixture(db,"ready", "staged",700,0);
+            addFixture(db,"small", "queued",100,0);
+            addFixture(db,"complete", "verified",50,0);
+            addFixture(db,"backoff", "staged",50,Long.MAX_VALUE);
+            addFixture(db,"unknown", "queued",-1,0);
+            assertEquals(Arrays.asList("ready"), ids(db,EpisodeQueue.DUE_STAGED_SQL));
+            assertEquals(Arrays.asList("small","large","unknown"), ids(db,EpisodeQueue.DUE_PREPARE_SQL));
+        } finally { c.deleteDatabase("video-episodes.db"); }
+    }
+    private static void addFixture(android.database.sqlite.SQLiteDatabase db,String id,String stage,long size,long retry) {
+        ContentValues row=new ContentValues();
+        row.put("target","test-player"); row.put("id",id); row.put("uri","content://test/"+id);
+        row.put("name",id+".mp4"); row.put("bytes",size); row.put("stage",stage); row.put("next_retry",retry);
+        assertTrue(db.insert("episodes",null,row)>=0);
+    }
+    private static List<String> ids(android.database.sqlite.SQLiteDatabase db,String sql) {
+        List<String> ids=new ArrayList<>();
+        try(android.database.Cursor c=db.rawQuery(sql,new String[]{Long.toString(System.currentTimeMillis())})) {
+            while(c.moveToNext()) ids.add(c.getString(1));
+        }
+        return ids;
+    }
 }
