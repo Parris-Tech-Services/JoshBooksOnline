@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl
+import json
+import os
 import shutil
 import signal
 import sqlite3
@@ -24,6 +26,7 @@ from . import __version__, library, planner, player, termux
 from . import config as cfg
 from .config import ALL_SHOWS, Config, ConfigError, PlayerPolicy
 from .drive import DriveClient
+from .export import export_state
 from .pipeline import MB, Pipeline, RunOptions
 from .process import Runner
 from .settings import Settings
@@ -246,6 +249,23 @@ def cmd_unschedule(ctx: Context, _args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(ctx: Context, args: argparse.Namespace) -> int:
+    """Read-only. Holds the run lock so no run changes the state mid-export."""
+    with exclusive(ctx.settings.lock_path):
+        data = export_state(ctx.store, ctx.config, ctx.clock())
+    text = json.dumps(data, indent=2) + "\n"
+    if not args.output:
+        sys.stdout.write(text)
+        return 0
+    target = Path(args.output)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, target)
+    print(f"exported {len(data['episodes'])} episodes and {len(data['players'])} player(s) to {target} "
+          "(private: keep it on the phone, never commit it)")
+    return 0
+
+
 def cmd_shows(ctx: Context, _args: argparse.Namespace) -> int:
     known: dict[str, list[str]] = {show: [] for show in ctx.store.shows()}
     for ep in ctx.store.episodes("kind != 'duplicate'"):
@@ -343,6 +363,7 @@ COMMANDS = {
     "claim": cmd_claim, "allow": cmd_allow, "deny": cmd_deny, "per-show": cmd_per_show,
     "add-root": cmd_add_root, "shows": cmd_shows, "retry": cmd_retry, "log": cmd_log,
     "restore-backup": cmd_restore, "schedule": cmd_schedule, "unschedule": cmd_unschedule,
+    "export": cmd_export,
 }
 
 
@@ -389,6 +410,9 @@ def build_parser() -> argparse.ArgumentParser:
     log = sub.add_parser("log", help="recent pipeline events")
     log.add_argument("-n", "--lines", type=int, default=30)
     sub.add_parser("restore-backup", help="put back the database snapshot from the start of the last run")
+    export = sub.add_parser("export", help="read-only JSON of players, allowlists, copy states and staged hashes "
+                                           "(for migrating to the app; private, never commit it)")
+    export.add_argument("--output", help="write to this file instead of standard output")
     schedule = sub.add_parser("schedule", help="run automatically with the Termux job scheduler")
     schedule.add_argument("--every", type=int, default=15, help="minutes between runs (Android minimum 15)")
     sub.add_parser("unschedule", help="stop the automatic runs")

@@ -24,6 +24,10 @@ from .media import sha256_file
 
 MARKER = ".ruizu-sync-device.json"
 MAX_MARKER_BYTES = 1024
+MAX_MARKER_FIELDS = 16
+# The RUIZU Sync app names its in-flight copies ".ruizu-<uuid>.part" (SafTransfer).
+APP_TEMP = re.compile(r"^\.ruizu-[0-9a-fA-F-]{36}\.part$")
+APP_TEMP_ACTIVE_SECONDS = 600
 PARTIAL_SUFFIX = ".ruizu-partial"
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CHUNK = 1024 * 1024
@@ -44,22 +48,60 @@ def is_mounted(root: Path) -> bool:
     return (root / "VIDEO").is_dir()
 
 
+class _DuplicateKey(ValueError):
+    pass
+
+
+def _reject_duplicates(pairs: list[tuple[str, object]]) -> dict:
+    keys = [k for k, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise _DuplicateKey("duplicate key")
+    return dict(pairs)
+
+
+def _flat_marker(text: str) -> dict | None:
+    """The marker as a flat object, with the same refusals as the app's PlayerIdentity.parse:
+    duplicate keys, nested objects or arrays, and more than MAX_MARKER_FIELDS fields."""
+    try:
+        data = json.loads(text, object_pairs_hook=_reject_duplicates)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(data, dict) or len(data) > MAX_MARKER_FIELDS:
+        return None
+    if any(isinstance(v, (dict, list)) for v in data.values()):
+        return None
+    return data
+
+
+def _clean_name(raw: object) -> str:
+    """As PlayerIdentity.cleanName: drop control characters, collapse whitespace, 48 characters."""
+    if raw is None:
+        return "Unnamed player"
+    text = "".join(c for c in str(raw) if not (ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F))
+    text = re.sub(r"\s+", " ", text).strip()[:48].strip()
+    return text or "Unnamed player"
+
+
+def _first_seen(raw: object) -> int:
+    text = str(raw).strip() if raw is not None and not isinstance(raw, bool) else ""
+    return max(0, int(text)) if re.fullmatch(r"-?\d{1,19}", text) else 0
+
+
 def read_identity(root: Path) -> Identity | None:
-    """The marker's identity, or None when it is absent, oversized or not ours."""
+    """The marker's identity, or None when it is absent, oversized or not one the app would accept."""
     marker = root / MARKER
     try:
         if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > MAX_MARKER_BYTES:
             return None
-        data = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        data = _flat_marker(marker.read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeDecodeError):
         return None
-    if not isinstance(data, dict) or data.get("version", 1) != 1:
+    if data is None or ("version" in data and str(data["version"]).strip() != "1"):
         return None
-    pid, name = str(data.get("id", "")).strip(), str(data.get("name", "")).strip()
+    pid = str(data.get("id", "")).strip()
     if not _ID.match(pid):
         return None
-    first_seen = data.get("firstSeenMs", 0)
-    return Identity(pid, name[:48] or "Unnamed player", first_seen if isinstance(first_seen, int) else 0)
+    return Identity(pid, _clean_name(data.get("name")), _first_seen(data.get("firstSeenMs")))
 
 
 def write_identity(root: Path, name: str, now_ms: int | None = None) -> Identity:
@@ -86,6 +128,22 @@ def inventory(root: Path) -> dict[str, int]:
         if entry.is_file(follow_symlinks=False):
             found[entry.name] = entry.stat(follow_symlinks=False).st_size
     return found
+
+
+def app_copies_in_progress(root: Path, now: float) -> tuple[list[str], list[str]]:
+    """The app's in-flight copy files in VIDEO/: (recently written, stale).
+
+    There is no lock shared with the app, so a recently written app temporary file is taken to
+    mean the app is copying right now; this tool then stays out of VIDEO/ until it has finished.
+    An old one is a leftover the app removes on its next transfer, and does not block anything.
+    """
+    active: list[str] = []
+    stale: list[str] = []
+    for entry in os.scandir(root / "VIDEO"):
+        if entry.is_file(follow_symlinks=False) and APP_TEMP.match(entry.name):
+            age = now - entry.stat(follow_symlinks=False).st_mtime
+            (active if age < APP_TEMP_ACTIVE_SECONDS else stale).append(entry.name)
+    return active, stale
 
 
 def free_bytes(path: Path) -> int:

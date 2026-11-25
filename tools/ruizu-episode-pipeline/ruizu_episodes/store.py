@@ -341,6 +341,12 @@ class Store:
                 (player_id, drive_id, state, size, seconds, now),
             )
 
+    def copy_rows(self, player_id: str) -> list[sqlite3.Row]:
+        rows = self.conn.execute(
+            "SELECT drive_id, state, bytes FROM copies WHERE player_id = ? ORDER BY drive_id", (player_id,)
+        )
+        return rows.fetchall()
+
     def clear_copy(self, player_id: str, drive_id: str) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM copies WHERE player_id = ? AND drive_id = ?", (player_id, drive_id))

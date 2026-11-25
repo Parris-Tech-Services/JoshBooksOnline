@@ -29,6 +29,9 @@ Standard-library Python 3.11+, `curl`, `ffmpeg`/`ffprobe`. Runs in Termux on the
   here, is reported and left alone.
 - **Per-player show lists.** A player only receives shows explicitly allowed for it
   (`allow`, or `--all`). Shows that no player is allowed are never downloaded.
+- **Stays out of the app's way.** There is no lock shared with the RUIZU Sync app, so if the app has
+  an in-flight copy (`VIDEO/.ruizu-<uuid>.part` written in the last 10 minutes), no episode is
+  copied that run. Preparation carries on. Older app leftovers are ignored and left for the app.
 - **Nothing half-written in `VIDEO/`.** Copies are written as `<name>.ruizu-partial`, fsynced,
   read back with the page cache dropped, SHA-256 compared, then renamed into place. An
   interrupted copy is cleaned up on the next connection; a file it did not write is never
@@ -112,6 +115,7 @@ record and the two cannot disagree. The app needs Termux's `com.termux.permissio
 | `retry LABEL... \| --all` | Try failed episodes again |
 | `log [-n N]` | Recent events |
 | `restore-backup` | Put back the database snapshot taken at the start of the last run |
+| `export [--output FILE]` | Read-only JSON for migrating to the native app: players, allowlists, per-player copy states (verified, present, removed) and staged SHA-256 values, keyed by episode label. No Drive ids or paths, but it names players and shows: keep it private |
 | `schedule [--every MIN]`, `unschedule` | Termux job scheduler |
 
 ## Where things live
