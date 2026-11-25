@@ -113,10 +113,34 @@ public final class SafTransfer {
             byte[] hash;
             long[] written = {0};
             requireTarget(tree);
-            try (OutputStream out = resolver.openOutputStream(temporary, "wt")) {
-                if (out == null) throw new IOException("Cannot write USB; reconnect or free space");
-                hash = VerifiedCopy.copy(source, out, size, cancelled, (bytes, total) -> { written[0] = bytes; progress.update(bytes, total); });
-            } // Closing must succeed before success or verification.
+            VerifiedCopy.Progress report = (bytes, total) -> {
+                written[0] = bytes;
+                progress.update(bytes, total);
+            };
+            if (expectedDeviceId != null) {
+                // Automatic episodes require a real file descriptor and a successful sync.
+                // A provider that exposes only a pipe or cannot flush is not safe for unattended
+                // publication. Do not fall back to cached readback or publish on failure.
+                android.os.ParcelFileDescriptor descriptor = resolver.openFileDescriptor(temporary, "wt");
+                if (descriptor == null) throw new IOException("Cannot open USB file descriptor for durable write");
+                try (android.os.ParcelFileDescriptor.AutoCloseOutputStream out =
+                        new android.os.ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
+                    hash = VerifiedCopy.copy(source, out, size, cancelled, report);
+                    VerifiedCopy.checkCancelled(cancelled);
+                    requireTarget(tree);
+                    try {
+                        out.getFD().sync();
+                    } catch (IOException syncError) {
+                        throw new IOException("USB durability sync failed; not publishing episode", syncError);
+                    }
+                }
+            } else {
+                // Preserve compatibility with the existing manual audio/SAF path.
+                try (OutputStream out = resolver.openOutputStream(temporary, "wt")) {
+                    if (out == null) throw new IOException("Cannot write USB; reconnect or free space");
+                    hash = VerifiedCopy.copy(source, out, size, cancelled, report);
+                }
+            } // Sync (where required) and close must succeed before verification.
             requireTarget(tree);
             try (InputStream check = resolver.openInputStream(temporary)) {
                 if (check == null) throw new IOException("Cannot read USB for verification");
