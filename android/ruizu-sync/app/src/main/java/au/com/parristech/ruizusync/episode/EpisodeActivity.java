@@ -52,6 +52,18 @@ public final class EpisodeActivity extends Activity {
         });
         button(root,"Approve a show or video folder for this player",()->pick(true));
         button(root,"Add individual videos (including Drive)",()->pick(false));
+        button(root,"Revoke all sources for selected player",()->{
+            int index=players.getSelectedItemPosition();
+            if(index<0||index>=ids.size()) { notice.setText("Choose a saved player first."); return; }
+            final String target=ids.get(index);
+            new AlertDialog.Builder(this).setTitle("Revoke video sources?")
+                .setMessage("Stops future downloads and transfers for this player. Existing player media and transfer history stay intact. Pause an active run before revoking. You can approve sources again later.")
+                .setNegativeButton("Cancel",null)
+                .setPositiveButton("Revoke sources",(d,w)->task(q->{
+                    q.revokeSources(target);
+                    main.post(()->notice.setText("Sources revoked for the selected player. Existing files were not changed."));
+                })).show();
+        });
         TextView provider=new TextView(this);
         provider.setText("Cloud providers that do not expose folder access can still supply individual videos via the system picker. Only choose media you are entitled to copy.");
         root.addView(provider);
