@@ -1404,6 +1404,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             useUsbButton.setEnabled(false);
             planOffered = false;
         } else {
+            au.com.parristech.ruizusync.episode.EpisodeRuntime.onPlayerConnected(this);
             maybeRestorePlayerFolder();
             maybeOfferPlan();
             StringBuilder sb = new StringBuilder("USB storage detected: ");
