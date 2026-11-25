@@ -13,6 +13,7 @@ import au.com.parristech.ruizusync.PlayerFolderStore;
 import au.com.parristech.ruizusync.SafTransfer;
 import au.com.parristech.ruizusync.TransferManager;
 import au.com.parristech.ruizusync.core.HashUtil;
+import au.com.parristech.ruizusync.core.EpisodePlan;
 import au.com.parristech.ruizusync.core.FileNameSanitizer;
 import au.com.parristech.ruizusync.io.DestRepo;
 import au.com.parristech.ruizusync.io.SourceRepo;
@@ -37,25 +38,36 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     private final Context context;
     private final File work;
     public EpisodeQueue(Context c) {
-        super(c.getApplicationContext(), "video-episodes.db", null, 2);
+        super(c.getApplicationContext(), "video-episodes.db", null, 3);
         context = c.getApplicationContext();
         work = new File(context.getFilesDir(), "episode-staging");
     }
     @Override public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE targets (id TEXT PRIMARY KEY, tree TEXT NOT NULL, name TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE targets (id TEXT PRIMARY KEY, tree TEXT NOT NULL, name TEXT NOT NULL, per_show INTEGER NOT NULL DEFAULT 1 CHECK(per_show BETWEEN 1 AND 20))");
         db.execSQL("CREATE TABLE libraries (target TEXT NOT NULL, tree TEXT NOT NULL, last_scan INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,tree))");
-        db.execSQL("CREATE TABLE episodes (target TEXT NOT NULL, id TEXT NOT NULL, uri TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'queued', sha TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)), PRIMARY KEY(target,id))");
+        db.execSQL("CREATE TABLE episodes (target TEXT NOT NULL, id TEXT NOT NULL, uri TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'queued', sha TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)), label TEXT NOT NULL DEFAULT '', show_name TEXT NOT NULL DEFAULT '', player_name TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,id))");
         db.execSQL("CREATE INDEX episode_due ON episodes(stage,next_retry)");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        if (oldVersion==1 && newVersion==2) {
+        if (oldVersion==1 && newVersion>=2) {
             // No speculative approval of older individual documents. Explicit saved trees
             // will be rediscovered; the user can reselect individual files. Keep all history.
             db.execSQL("ALTER TABLE episodes ADD COLUMN approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1))");
             db.execSQL("UPDATE libraries SET last_scan=0");
+            oldVersion=2;
+        }
+        if(oldVersion==2 && newVersion==3) {
+            db.execSQL("ALTER TABLE targets ADD COLUMN per_show INTEGER NOT NULL DEFAULT 1 CHECK(per_show BETWEEN 1 AND 20)");
+            db.execSQL("ALTER TABLE episodes ADD COLUMN label TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE episodes ADD COLUMN show_name TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE episodes ADD COLUMN player_name TEXT NOT NULL DEFAULT ''");
+            // Do not guess show identities for previously approved pending rows. Re-discover
+            // saved trees and require explicit reselection for older individual sources.
+            db.execSQL("UPDATE episodes SET approved=0 WHERE stage!='verified'");
+            db.execSQL("UPDATE libraries SET last_scan=0");
             return;
         }
-        throw new IllegalStateException("Missing episode database migration");
+        if(oldVersion!=newVersion) throw new IllegalStateException("Missing episode database migration");
     }
     public void bind(String id, String name, Uri tree) throws IOException {
         if (id == null || !id.equals(PlayerMarkerStore.read(context, tree).deviceId())
@@ -64,7 +76,9 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         }
         ContentValues v = new ContentValues();
         v.put("id", id); v.put("tree", tree.toString()); v.put("name", name == null ? "Player" : name);
-        getWritableDatabase().insertWithOnConflict("targets", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+        SQLiteDatabase db=getWritableDatabase();
+        db.insertWithOnConflict("targets",null,v,SQLiteDatabase.CONFLICT_IGNORE);
+        db.update("targets",v,"id=?",new String[]{id});
     }
     /** A source must be explicitly assigned to a saved target and never be its own USB volume. */
     private void requireSource(String target, Uri source) throws IOException {
@@ -116,6 +130,12 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             } finally { db.endTransaction(); }
         } finally { ACTIVE.set(false); }
     }
+    public void setPerShow(String target,int count) throws IOException {
+        if(count<1||count>20) throw new IOException("Episodes per show must be 1 to 20");
+        ContentValues v=new ContentValues(); v.put("per_show",count);
+        if(getWritableDatabase().update("targets",v,"id=?",new String[]{target})!=1)
+            throw new IOException("Choose a saved player");
+    }
     public void refreshCatalogue() {
         getWritableDatabase().execSQL("UPDATE libraries SET last_scan=0");
     }
@@ -134,15 +154,38 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             }
         }
         if (!EpisodeCodec.supported(name)) throw new IOException("Choose a supported video file");
-        insert(target, uri, name, bytes, modified);
+        insert(target, uri, name, bytes, modified, null, name);
     }
-    private void insert(String target, Uri uri, String name, long size, long modified) throws Exception {
+    /** Preserve the Python pipeline's labels rather than copying raw release filenames. */
+    static String[] identity(String name,String approvedShow,String relativePath) {
+        if(name.endsWith(EpisodePlan.PLAYER_SUFFIX)) {
+            String label=name.substring(0,name.length()-EpisodePlan.PLAYER_SUFFIX.length());
+            return new String[]{EpisodePlan.identifyLabel(label).getKey(),label};
+        }
+        String base=name.replaceFirst("\\.[^.]+$","");
+        String show=approvedShow;
+        if(show==null||show.trim().isEmpty()||"Selected folder".equals(show)) {
+            java.util.regex.Matcher m=java.util.regex.Pattern.compile("(?i)(?:^|[ ._-])(?:s\\d{1,2}[ ._-]?e\\d{1,3}|\\d{1,2}x\\d{1,3})(?:[^0-9]|$)").matcher(base);
+            if(m.find()&&m.start()>0) show=base.substring(0,m.start()).replace('.',' ').replace('_',' ').trim();
+            else {
+                String label=EpisodePlan.cleanText(base);
+                return new String[]{label,label};
+            }
+        }
+        show=EpisodePlan.cleanText(show);
+        String label=EpisodePlan.identify(show,relativePath==null?name:relativePath).label;
+        return new String[]{show,label};
+    }
+    private void insert(String target, Uri uri, String name, long size, long modified,String show,String relativePath) throws Exception {
         if (target == null || size == 0 || !EpisodeCodec.supported(name)) return;
         String id = hex(MessageDigest.getInstance("SHA-256").digest(
             (uri + "\n" + size + "\n" + modified).getBytes(StandardCharsets.UTF_8)));
         ContentValues v = new ContentValues();
         v.put("target", target); v.put("id", id); v.put("uri", uri.toString());
         v.put("name", name); v.put("bytes", size);
+        String[] identity=identity(name,show,relativePath);
+        if(identity[0].isEmpty()||identity[1].isEmpty()) return;
+        v.put("show_name",identity[0]); v.put("label",identity[1]);
         v.put("approved",1);
         SQLiteDatabase db=getWritableDatabase();
         db.beginTransaction();
@@ -151,7 +194,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             // Reselecting exactly the same source version restores approval without resetting
             // its verified status, staged hash or retry history.
             ContentValues approved=new ContentValues();
-            approved.put("approved",1);
+            approved.put("approved",1); approved.put("show_name",identity[0]); approved.put("label",identity[1]);
             db.update("episodes",approved,"target=? AND id=?",new String[]{target,id});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
@@ -174,7 +217,10 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                 Uri tree = Uri.parse(library[1]);
                 ArrayDeque<String> pending = new ArrayDeque<>();
                 Set<String> seen = new HashSet<>();
-                pending.add(DocumentsContract.getTreeDocumentId(tree));
+                Map<String,String> paths=new HashMap<>();
+                String root=DocumentsContract.getTreeDocumentId(tree);
+                String show=new SourceRepo(context).treeDisplayName(tree);
+                pending.add(root); paths.put(root,"");
                 int visited = 0;
                 while (!pending.isEmpty()) {
                     if (stopped.getAsBoolean()) return;
@@ -191,10 +237,14 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                             if (++visited > 100_000) throw new IOException("Library scan limit reached; choose a smaller folder");
                             String doc = c.getString(0);
                             if (doc == null) continue;
-                            if (DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(2))) pending.add(doc);
-                            else if (EpisodeCodec.supported(c.getString(1)))
+                            String name=c.getString(1);
+                            if(name==null) continue;
+                            String relative=paths.get(dir)+"/"+name;
+                            if (DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(2))) {
+                                paths.put(doc,relative); pending.add(doc);
+                            } else if (EpisodeCodec.supported(name))
                                 insert(library[0], DocumentsContract.buildDocumentUriUsingTree(tree, doc),
-                                    c.getString(1), c.isNull(3) ? -1 : c.getLong(3), c.isNull(4) ? 0 : c.getLong(4));
+                                    name, c.isNull(3) ? -1 : c.getLong(3), c.isNull(4) ? 0 : c.getLong(4),show,relative);
                         }
                     }
                 }
@@ -206,10 +256,11 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         }
     }
     private static class Row {
-        String target,id,uri,name,stage,sha; long bytes; int attempts;
+        String target,id,uri,name,stage,sha,label,show,playerName; long bytes; int attempts;
         Row(Cursor c) {
             target=c.getString(0); id=c.getString(1); uri=c.getString(2); name=c.getString(3);
             bytes=c.getLong(4); stage=c.getString(5); sha=c.getString(6); attempts=c.getInt(7);
+            label=c.getString(8); show=c.getString(9); playerName=c.getString(10);
         }
     }
     private void update(Row r, String stage, String hash, String error, int attempts, long retry) {
@@ -254,13 +305,32 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     }
     // Two passes are intentional: a slow or unavailable Drive must never delay a
     // prepared copy. The download limit applies only to preparation, not to USB.
+    private static final String ROW_COLUMNS="target,id,uri,name,bytes,stage,sha,attempts,label,show_name,player_name";
     static final String DUE_STAGED_SQL =
-        "SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes " +
+        "SELECT "+ROW_COLUMNS+" FROM episodes " +
         "WHERE approved=1 AND stage='staged' AND next_retry<=? ORDER BY rowid";
     static final String DUE_PREPARE_SQL =
-        "SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes " +
-        "WHERE approved=1 AND stage NOT IN ('staged','verified') AND next_retry<=? " +
+        "SELECT "+ROW_COLUMNS+" FROM episodes " +
+        "WHERE approved=1 AND stage NOT IN ('staged','verified','present','removed','conflict') AND next_retry<=? " +
         "ORDER BY CASE WHEN bytes>0 THEN 0 ELSE 1 END,bytes,rowid";
+
+    private static boolean terminal(String stage) {
+        return "verified".equals(stage)||"present".equals(stage)||"removed".equals(stage)||"conflict".equals(stage);
+    }
+    private List<Row> rowsFor(String target) {
+        List<Row> rows=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT "+ROW_COLUMNS+" FROM episodes WHERE target=? ORDER BY rowid",new String[]{target})) {
+            while(c.moveToNext()) rows.add(new Row(c));
+        }
+        return rows;
+    }
+    private int perShow(String target) {
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT per_show FROM targets WHERE id=?",new String[]{target})) {
+            return c.moveToFirst()?c.getInt(0):1;
+        }
+    }
+    private String labelKey(Row r) { return r.label.toLowerCase(Locale.ROOT); }
+    private String useKey(Row r) { return r.target+"\n"+r.show.toLowerCase(Locale.ROOT); }
 
     private List<Row> dueRows(boolean staged) {
         List<Row> rows=new ArrayList<>();
@@ -271,7 +341,44 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         return rows;
     }
 
-    private void processRows(List<Row> rows,BooleanSupplier stopped,int limit,boolean staged) {
+    /** Use Claude's shared planning core; an approved label is eligible only once per player. */
+    private List<Row> plan(boolean staged,Map<String,Integer> used) {
+        List<Row> result=new ArrayList<>(), due=dueRows(staged);
+        Map<String,List<Row>> grouped=new LinkedHashMap<>();
+        for(Row row:due) {
+            if(!row.label.isEmpty()&&!row.show.isEmpty()) grouped.computeIfAbsent(row.target,k->new ArrayList<>()).add(row);
+        }
+        for(Map.Entry<String,List<Row>> target:grouped.entrySet()) {
+            Map<String,Row> byLabel=new LinkedHashMap<>();
+            Set<String> had=new HashSet<>();
+            List<EpisodePlan.Candidate> candidates=new ArrayList<>();
+            for(Row row:rowsFor(target.getKey())) {
+                if(terminal(row.stage)&&!row.label.isEmpty()) {
+                    had.add(labelKey(row));
+                    candidates.add(new EpisodePlan.Candidate(labelKey(row),row.show,
+                        EpisodePlan.identifyLabel(row.label).getValue(),row.bytes,EpisodePlan.State.PENDING));
+                }
+            }
+            for(Row row:target.getValue()) {
+                String key=labelKey(row);
+                if(byLabel.putIfAbsent(key,row)==null)
+                    candidates.add(new EpisodePlan.Candidate(key,row.show,EpisodePlan.identifyLabel(row.label).getValue(),
+                        row.bytes,staged?EpisodePlan.State.STAGED:EpisodePlan.State.PENDING));
+            }
+            int cap=perShow(target.getKey());
+            Map<String,Integer> planned=new HashMap<>(used);
+            for(EpisodePlan.Candidate c:EpisodePlan.nextForPlayer(EpisodePlan.byShow(candidates),had,EpisodePlan.Allowlist.all(),cap)) {
+                Row row=byLabel.get(c.key);
+                if(row==null) continue;
+                String key=useKey(row);
+                int count=planned.getOrDefault(key,0);
+                if(count<cap) { result.add(row); planned.put(key,count+1); }
+            }
+        }
+        return result;
+    }
+
+    private void processRows(List<Row> rows,BooleanSupplier stopped,int limit,boolean staged,Map<String,Integer> used) {
         int processed=0;
         for(Row r:rows) {
             if(stopped.getAsBoolean()||processed>=limit) return;
@@ -279,6 +386,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                 // Re-read identity rather than caching a previous USB connection.
                 Uri tree=targetTree(r.target);
                 if(staged&&tree==null) continue;
+                used.put(useKey(r),used.getOrDefault(useKey(r),0)+1);
                 if(!staged) prepare(r,stopped);
                 if(!stopped.getAsBoolean()) {
                     tree=targetTree(r.target);
@@ -298,13 +406,63 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         if(!ACTIVE.compareAndSet(false,true)) return false;
         try {
             if(!work.isDirectory()&&!work.mkdirs()) throw new IOException("Cannot create app staging folder");
-            processRows(dueRows(true),stopped,Integer.MAX_VALUE,true);
+            Map<String,Integer> used=new HashMap<>();
+            reconcilePlayers(stopped);
+            processRows(plan(true,used),stopped,Integer.MAX_VALUE,true,used);
             if(!transferOnly&&!stopped.getAsBoolean()) {
                 discover(stopped);
-                if(!stopped.getAsBoolean()) processRows(dueRows(false),stopped,limit,false);
+                reconcilePlayers(stopped);
+                if(!stopped.getAsBoolean()) processRows(plan(false,used),stopped,limit,false,used);
             }
             return true;
         } finally { ACTIVE.set(false); }
+    }
+    private String canonicalName(Row row) { return EpisodePlan.playerFileName(row.label); }
+    private String legacyName(Row row) {
+        String name=row.name.replaceFirst("\\.[^.]+$","");
+        if(name.length()>100) name=name.substring(0,100);
+        return FileNameSanitizer.fileName(name+".amv");
+    }
+    private void recordPlayerName(Row row,String name) {
+        ContentValues value=new ContentValues(); value.put("player_name",name);
+        getWritableDatabase().update("episodes",value,"target=? AND id=?",new String[]{row.target,row.id});
+        row.playerName=name;
+    }
+    /** Reconcile only against a positively identified and readable player. A name match
+     * counts as present, never hash-verified. Never overwrite or remove existing media.
+     */
+    private void reconcilePlayers(BooleanSupplier stopped) {
+        for(String target:targets().keySet()) {
+            if(stopped.getAsBoolean()) return;
+            Uri tree=targetTree(target);
+            if(tree==null) continue;
+            try {
+                DestRepo repo=new DestRepo(context,tree);
+                DestRepo.Node dir=repo.findChild(repo.root(),"VIDEO");
+                if(dir!=null&&!dir.directory) continue;
+                for(Row row:rowsFor(target)) {
+                    if(stopped.getAsBoolean()) return;
+                    requirePlayer(row,tree);
+                    if(row.label.isEmpty()||"removed".equals(row.stage)) continue;
+                    DestRepo.Node found=dir==null?null:repo.findChild(dir,row.playerName.isEmpty()?canonicalName(row):row.playerName);
+                    if(found==null&&dir!=null) found=repo.findChild(dir,legacyName(row));
+                    requirePlayer(row,tree);
+                    if(found!=null&&!found.directory) {
+                        if(!terminal(row.stage)) {
+                            recordPlayerName(row,found.name);
+                            if(found.size==0) update(row,"conflict",null,"Existing zero-byte video retained; inspect it manually",0,0);
+                            else if(EpisodePlan.classifyPlayerFile(Math.max(1,found.size),-1,()->false)==EpisodePlan.Found.HAD)
+                                update(row,"present",null,"",0,0);
+                        }
+                    } else if("verified".equals(row.stage)||"present".equals(row.stage)) {
+                        update(row,"removed",row.sha,"Previously present; not queued again",0,0);
+                    }
+                }
+            } catch(Exception e) {
+                // A disconnected or unreadable provider is not evidence of removal.
+                android.util.Log.w("RUIZU","Player reconciliation postponed",e);
+            }
+        }
     }
     private File file(Row r,String extension) { return new File(work,r.id+"-"+r.target+extension); }
     private static void check(BooleanSupplier stopped) throws InterruptedIOException {
@@ -429,16 +587,15 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             requirePlayer(r,tree);
             if(dir==null) dir=repo.ensureDir(Collections.singletonList("VIDEO"));
             requirePlayer(r,tree);
-            String name=r.name.replaceFirst("\\.[^.]+$","");
-            if(name.length()>100) name=name.substring(0,100);
-            name=FileNameSanitizer.fileName(name+".amv");
+            if(r.label.isEmpty()) throw new IOException("Source approval and episode label required");
+            String name=canonicalName(r);
             DestRepo.Node existing=repo.findChild(dir,name);
-            if(existing!=null && !r.sha.equals(repo.hash(existing))) {
-                name=FileNameSanitizer.fileName(name.replaceFirst("\\.amv$","")+" ["+r.id.substring(0,10)+"].amv");
-                existing=repo.findChild(dir,name);
-            }
             if(existing!=null) {
-                if(!r.sha.equals(repo.hash(existing))) throw new IOException("Filename conflict; existing media kept");
+                if(existing.directory || !r.sha.equals(repo.hash(existing))) {
+                    recordPlayerName(r,existing.name);
+                    update(r,"conflict",null,"Existing file retained; content differs from the staged episode",0,0);
+                    return;
+                }
             } else {
                 long free=repo.availableBytes();
                 if(free>=0 && free<output.length()) throw new IOException("RUIZU has insufficient free space");
@@ -460,6 +617,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             DestRepo.Node published=repo.findChild(dir,name);
             if(published==null || !r.sha.equals(repo.hash(published))) throw new IOException("Published file could not be verified");
             requirePlayer(r,tree);
+            recordPlayerName(r,name);
             update(r,"verified",r.sha,"",0,0);
             output.delete();
         } finally { synchronized(manager) { writing=false; } }
