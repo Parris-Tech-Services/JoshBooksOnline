@@ -248,4 +248,40 @@ public class EpisodeNativeTest {
             }
         } finally { c.deleteDatabase("video-episodes.db"); }
     }
+
+    @Test public void importLegacyHistoryDoesNotGrantSourceAccessOrRequeueRemovedLabels() throws Exception {
+        Context c=context();
+        assertTrue(c.getPackageName().endsWith(".saftest"));
+        c.deleteDatabase("video-episodes.db");
+        try(EpisodeQueue q=new EpisodeQueue(c)) {
+            android.database.sqlite.SQLiteDatabase db=q.getWritableDatabase();
+            ContentValues player=new ContentValues();
+            player.put("id","test-player"); player.put("tree","content://test/tree/root"); player.put("name","Test player");
+            assertTrue(db.insert("targets",null,player)>=0);
+            String fixture="{\"format\":\"ruizu-episodes-export\",\"version\":1,\"schema_version\":1,"
+                +"\"players\":[{\"marker_id\":\"test-player\",\"per_show\":2,\"copies\":["
+                +"{\"label\":\"Example Show S01E01\",\"state\":\"verified\"},"
+                +"{\"label\":\"Example Show S01E02\",\"state\":\"removed\"},"
+                +"{\"label\":\"Example Show S01E03\",\"state\":\"copying\"}]}]}";
+            byte[] bytes=fixture.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(2,q.importLegacyHistory("test-player",new ByteArrayInputStream(bytes)));
+            assertEquals(2,q.importLegacyHistory("test-player",new ByteArrayInputStream(bytes)));
+            for(String table:Arrays.asList("episodes","libraries","drive_roots")) {
+                try(android.database.Cursor r=db.rawQuery("SELECT count(*) FROM "+table,null)) {
+                    assertTrue(r.moveToFirst()); assertEquals(0,r.getInt(0));
+                }
+            }
+            for(int i=1;i<=3;i++) {
+                String id="episode-"+i;
+                addFixture(db,id,"queued",100,0);
+                ContentValues label=new ContentValues();
+                label.put("show_name","Example Show");label.put("label","Example Show S01E0"+i);
+                db.update("episodes",label,"id=?",new String[]{id});
+            }
+            List<EpisodeQueue.Row> plan=q.plan(false,new HashMap<>());
+            assertEquals(1,plan.size()); assertEquals("episode-3",plan.get(0).id);
+            try {q.importLegacyHistory("wrong-player",new ByteArrayInputStream(bytes));fail("Wrong player accepted");}
+            catch(IOException expected) {}
+        } finally {c.deleteDatabase("video-episodes.db");}
+    }
 }
