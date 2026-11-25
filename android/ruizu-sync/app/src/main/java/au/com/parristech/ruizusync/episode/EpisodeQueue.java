@@ -335,7 +335,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             getWritableDatabase().update("libraries", v, "target=? AND tree=?", library);
         }
     }
-    private static class Row {
+    static class Row {
         String target,id,uri,name,stage,sha,label,show,playerName; long bytes; int attempts;
         Row(Cursor c) {
             target=c.getString(0); id=c.getString(1); uri=c.getString(2); name=c.getString(3);
@@ -425,7 +425,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     }
 
     /** Use Claude's shared planning core; an approved label is eligible only once per player. */
-    private List<Row> plan(boolean staged,Map<String,Integer> used) {
+    List<Row> plan(boolean staged,Map<String,Integer> used) {
         List<Row> result=new ArrayList<>(), due=dueRows(staged);
         Map<String,List<Row>> grouped=new LinkedHashMap<>();
         for(Row row:due) {
@@ -550,15 +550,63 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             }
         }
     }
-    private File file(Row r,String extension) { return new File(work,r.id+"-"+r.target+extension); }
+    private File file(Row r,String extension) { return new File(work,r.id+extension); }
+    private void updateShared(Row r,String stage,String sha) {
+        ContentValues v=new ContentValues(); v.put("stage",stage); v.put("sha",sha);
+        v.put("error",""); v.put("attempts",0); v.put("next_retry",0);
+        getWritableDatabase().update("episodes",v,
+            "id=? AND approved=1 AND stage NOT IN ('verified','present','removed','conflict')",new String[]{r.id});
+        r.stage=stage; r.sha=sha; r.attempts=0;
+    }
+    /** Reuse an existing validated shared AMV. Migrate older app-private per-player
+     * staging only after comparing its recorded checksum; never touch player files.
+     */
+    private boolean reuseShared(Row r) throws Exception {
+        File output=file(r,".amv");
+        if(!output.isFile()&&r.sha!=null) {
+            File legacy=new File(work,r.id+"-"+r.target+".amv");
+            if(legacy.isFile()&&r.sha.equals(hash(legacy))) {
+                if(!legacy.renameTo(output)) throw new IOException("Could not adopt previous staged video");
+            }
+        }
+        if(!output.isFile()) return false;
+        String actual=hash(output);
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT sha FROM episodes WHERE id=? AND sha IS NOT NULL",new String[]{r.id})) {
+            while(c.moveToNext()) {
+                if(actual.equals(c.getString(0))) {
+                    updateShared(r,"staged",actual);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    private boolean sharedDownloadExists(Row r,File source) {
+        if(!source.isFile()||(r.bytes>=0&&source.length()!=r.bytes)) return false;
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT 1 FROM episodes WHERE id=? AND stage='downloaded' LIMIT 1",new String[]{r.id})) {
+            return c.moveToFirst();
+        }
+    }
+    private void releaseSharedIfSatisfied(Row r,File output) {
+        Set<String> wanted=new HashSet<>(), verified=new HashSet<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT target,stage FROM episodes WHERE id=? AND approved=1",new String[]{r.id})) {
+            while(c.moveToNext()) {
+                String target=c.getString(0),stage=c.getString(1);
+                if("present".equals(stage)||"removed".equals(stage)||"conflict".equals(stage)) continue;
+                wanted.add(target);
+                if("verified".equals(stage)) verified.add(target);
+            }
+        }
+        if(EpisodePlan.canReleaseStaged(wanted,verified)) output.delete();
+    }
     private static void check(BooleanSupplier stopped) throws InterruptedIOException {
         if (stopped.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Paused");
     }
     private void prepare(Row r,BooleanSupplier stopped) throws Exception {
         File source=file(r,".source"), part=file(r,".download"), output=file(r,".amv"), temp=file(r,".part.amv");
-        if ("staged".equals(r.stage) && r.sha!=null && output.isFile() && r.sha.equals(hash(output))) return;
+        if(reuseShared(r)) return;
         if ("staged".equals(r.stage)) update(r,"queued",null,"",0,0);
-        if (!"downloaded".equals(r.stage) || !source.isFile() || (r.bytes>=0 && source.length()!=r.bytes)) {
+        if (!sharedDownloadExists(r,source)) {
             if (!directDrive(r)&&new SourceRepo(context).isDrmProtected(Uri.parse(r.uri))) throw new IOException("DRM protected video is unsupported");
             if (r.bytes>MAX_SOURCE || (r.bytes>0 && work.getUsableSpace()-RESERVE<r.bytes)) throw new IOException("Not enough phone storage for source");
             update(r,"queued",null,"",r.attempts,0);
@@ -584,7 +632,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                 out.getFD().sync();
             }
             if (!part.renameTo(source)) throw new IOException("Could not checkpoint download");
-            update(r,"downloaded",null,"",r.attempts,0);
+            updateShared(r,"downloaded",null);
             if(directDrive(r)) DriveEpisodeSource.finish(part);
         }
         check(stopped);
@@ -604,9 +652,10 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             command(EpisodeCodec.encode(executable("ffmpeg"),source.getAbsolutePath(),temp.getAbsolutePath()),stopped,7200);
         }
         validate(temp,duration,stopped);
+        try(RandomAccessFile durable=new RandomAccessFile(temp,"rw")) { durable.getFD().sync(); }
         String sha=hash(temp);
         if (!temp.renameTo(output)) throw new IOException("Could not checkpoint converted video");
-        update(r,"staged",sha,"",0,0);
+        updateShared(r,"staged",sha);
         source.delete();
     }
     private String executable(String name) throws IOException {
@@ -672,7 +721,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         try {
             requirePlayer(r,tree); check(stopped);
             File output=file(r,".amv");
-            if(!output.isFile() || r.sha==null || !hash(output).equals(r.sha)) {
+            if(!reuseShared(r)) {
                 // Do not trap missing/corrupt staging files forever in the USB-only queue.
                 update(r,"queued",null,"Staged video needs preparing again",0,0);
                 throw new IOException("Staged video missing or checksum mismatch; preparation required");
@@ -683,6 +732,9 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             requirePlayer(r,tree);
             if(dir==null) dir=repo.ensureDir(Collections.singletonList("VIDEO"));
             requirePlayer(r,tree);
+            for(String filename:repo.existingNames(dir)) {
+                if(filename.endsWith(".ruizu-partial")) throw new IOException("Another episode writer has an incomplete file; stop it and recover first");
+            }
             if(r.label.isEmpty()) throw new IOException("Source approval and episode label required");
             String name=canonicalName(r);
             DestRepo.Node existing=repo.findChild(dir,name);
@@ -715,7 +767,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             requirePlayer(r,tree);
             recordPlayerName(r,name);
             update(r,"verified",r.sha,"",0,0);
-            output.delete();
+            releaseSharedIfSatisfied(r,output);
         } finally { synchronized(manager) { writing=false; } }
     }
     private static String message(Exception e) {
