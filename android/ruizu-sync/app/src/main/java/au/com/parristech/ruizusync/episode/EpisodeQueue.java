@@ -40,7 +40,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     private final Context context;
     private final File work;
     public EpisodeQueue(Context c) {
-        super(c.getApplicationContext(), "video-episodes.db", null, 4);
+        super(c.getApplicationContext(), "video-episodes.db", null, 5);
         context = c.getApplicationContext();
         work = new File(context.getFilesDir(), "episode-staging");
     }
@@ -50,6 +50,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE episodes (target TEXT NOT NULL, id TEXT NOT NULL, uri TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'queued', sha TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)), label TEXT NOT NULL DEFAULT '', show_name TEXT NOT NULL DEFAULT '', player_name TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,id))");
         db.execSQL("CREATE INDEX episode_due ON episodes(stage,next_retry)");
         createDriveTables(db);
+        createLegacyTables(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion==1 && newVersion>=2) {
@@ -70,8 +71,81 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             db.execSQL("UPDATE libraries SET last_scan=0");
             oldVersion=3;
         }
-        if(oldVersion==3 && newVersion==4) { createDriveTables(db); oldVersion=4; }
+        if(oldVersion==3 && newVersion>=4) { createDriveTables(db); oldVersion=4; }
+        if(oldVersion==4 && newVersion==5) { createLegacyTables(db); oldVersion=5; }
         if(oldVersion!=newVersion) throw new IllegalStateException("Missing episode database migration");
+    }
+    private static void createLegacyTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE legacy_had (target TEXT NOT NULL, label TEXT NOT NULL COLLATE NOCASE, state TEXT NOT NULL, PRIMARY KEY(target,label))");
+    }
+    /** Import Claude's export format v1 for one already-bound player. This is history,
+     * not proof of a native write. Never imports source permissions or writes USB.
+     */
+    public int importLegacyHistory(String target,InputStream input) throws Exception {
+        if(target==null||input==null) throw new IOException("Choose a bound player and export");
+        if(!ACTIVE.compareAndSet(false,true)) throw new IOException("Pause the active worker before importing history");
+        try {
+            ByteArrayOutputStream buffer=new ByteArrayOutputStream();
+            byte[] chunk=new byte[16384]; int n;
+            while((n=input.read(chunk))!=-1) {
+                if(buffer.size()+n>8*1024*1024) throw new IOException("Legacy export exceeds 8 MB");
+                buffer.write(chunk,0,n);
+            }
+            JSONObject export=new JSONObject(new String(buffer.toByteArray(),StandardCharsets.UTF_8));
+            if(!"ruizu-episodes-export".equals(export.getString("format"))
+                    ||export.getInt("version")!=1||export.getInt("schema_version")!=1)
+                throw new IOException("Unsupported legacy episode export version");
+            JSONArray players=export.getJSONArray("players");
+            JSONObject player=null;
+            for(int i=0;i<players.length();i++) {
+                JSONObject candidate=players.getJSONObject(i);
+                if(target.equals(candidate.getString("marker_id"))) {
+                    if(player!=null) throw new IOException("Duplicate player in export");
+                    player=candidate;
+                }
+            }
+            if(player==null) throw new IOException("Export does not contain the selected player's marker ID");
+            int cap=player.getInt("per_show");
+            if(cap<1||cap>20) throw new IOException("Invalid legacy episode cap");
+            JSONArray copies=player.getJSONArray("copies");
+            Map<String,String> had=new LinkedHashMap<>();
+            for(int i=0;i<copies.length();i++) {
+                JSONObject copy=copies.getJSONObject(i);
+                String label=copy.getString("label"),state=copy.getString("state");
+                if(label.isEmpty()||label.length()>150||label.matches(".*[\\x00-\\x1f\\x7f/\\\\:*?\"<>|].*"))
+                    throw new IOException("Invalid episode label in legacy export");
+                if(!Arrays.asList("verified","present","removed","copying").contains(state))
+                    throw new IOException("Unknown legacy copy state");
+                String key=label.toLowerCase(Locale.ROOT);
+                if(had.putIfAbsent(key,state)!=null) throw new IOException("Duplicate episode label in legacy export");
+            }
+            SQLiteDatabase db=getWritableDatabase();
+            db.beginTransaction();
+            int imported=0;
+            try {
+                try(Cursor c=db.rawQuery("SELECT id FROM targets WHERE id=?",new String[]{target})) {
+                    if(!c.moveToFirst()) throw new IOException("Bind the selected player first");
+                }
+                for(Map.Entry<String,String> row:had.entrySet()) {
+                    if("copying".equals(row.getValue())) continue;
+                    ContentValues value=new ContentValues(); value.put("target",target); value.put("label",row.getKey());
+                    // A prior CLI verification is historical evidence, not native verification.
+                    value.put("state","removed".equals(row.getValue())?"removed":"previously_had");
+                    db.insertWithOnConflict("legacy_had",null,value,SQLiteDatabase.CONFLICT_IGNORE);
+                    imported++;
+                }
+                setPerShow(target,cap);
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+            return imported;
+        } finally { ACTIVE.set(false); }
+    }
+    private Set<String> importedHad(String target) {
+        Set<String> result=new HashSet<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT label FROM legacy_had WHERE target=?",new String[]{target})) {
+            while(c.moveToNext()) result.add(c.getString(0).toLowerCase(Locale.ROOT));
+        }
+        return result;
     }
     private static final long DRIVE_TTL=7*DAY, DOWNLOAD_BUDGET=1500L*1024*1024;
     private long remainingDownload=DOWNLOAD_BUDGET;
@@ -381,6 +455,9 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             "SELECT targets.name,count(*) FROM episodes JOIN targets ON targets.id=episodes.target WHERE episodes.approved=0 AND episodes.stage!='verified' GROUP BY targets.id,targets.name",null)) {
             while(c.moveToNext()) b.append(c.getString(0)).append(" · paused, source approval required: ").append(c.getInt(1)).append('\n');
         }
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT targets.name,count(*) FROM legacy_had JOIN targets ON legacy_had.target=targets.id GROUP BY targets.id,targets.name",null)) {
+            while(c.moveToNext()) b.append(c.getString(0)).append(" · imported history: ").append(c.getInt(1)).append('\n');
+        }
         try(Cursor c=getReadableDatabase().rawQuery("SELECT error FROM drive_folders WHERE error!='' LIMIT 3",null)) {
             while(c.moveToNext()) b.append("Shared Drive: ").append(c.getString(0)).append('\n');
         }
@@ -433,7 +510,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         }
         for(Map.Entry<String,List<Row>> target:grouped.entrySet()) {
             Map<String,Row> byLabel=new LinkedHashMap<>();
-            Set<String> had=new HashSet<>();
+            Set<String> had=importedHad(target.getKey());
             List<EpisodePlan.Candidate> candidates=new ArrayList<>();
             for(Row row:rowsFor(target.getKey())) {
                 if(terminal(row.stage)&&!row.label.isEmpty()) {
