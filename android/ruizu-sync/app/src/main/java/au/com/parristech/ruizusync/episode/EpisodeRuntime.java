@@ -55,6 +55,12 @@ public final class EpisodeRuntime {
     public static void pauseNow(Context c) {
         c.stopService(new Intent(c,Foreground.class));
     }
+    /** System storage mount broadcast can schedule an offline transfer even when the UI is closed. */
+    public static final class UsbMount extends BroadcastReceiver {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_MEDIA_MOUNTED.equals(intent.getAction())) onPlayerConnected(context);
+        }
+    }
     public static final class Scheduled extends JobService {
         private final ConcurrentHashMap<Integer,AtomicBoolean> running=new ConcurrentHashMap<>();
         @Override public boolean onStartJob(JobParameters params) {
