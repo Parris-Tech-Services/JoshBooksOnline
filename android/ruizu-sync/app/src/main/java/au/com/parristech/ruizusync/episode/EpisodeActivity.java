@@ -14,7 +14,7 @@ import java.util.concurrent.Executors;
 
 /** Video queue screen inside the canonical RUIZU Sync application, not a separate package. */
 public final class EpisodeActivity extends Activity {
-    private static final int TREE=8101, FILES=8102;
+    private static final int TREE=8101, FILES=8102, LEGACY=8103;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private TextView status, notice;
@@ -53,6 +53,7 @@ public final class EpisodeActivity extends Activity {
         button(root,"Approve a show or video folder for this player",()->pick(true));
         button(root,"Approve a shared Google Drive show",this::chooseSharedDrive);
         button(root,"Episodes per show (default 1)",this::chooseEpisodeCap);
+        button(root,"Import previous episode history",this::pickLegacy);
         button(root,"Add individual videos (including Drive)",()->pick(false));
         button(root,"Revoke all sources for selected player",()->{
             int index=players.getSelectedItemPosition();
@@ -145,6 +146,20 @@ public final class EpisodeActivity extends Activity {
                 task(q->{q.setPerShow(target,Integer.parseInt(raw));main.post(()->notice.setText("Episode cap saved."));});
             }).show();
     }
+    private void pickLegacy() {
+        String target=selectedPlayer();
+        if(target==null) {notice.setText("Bind an identified player first.");return;}
+        new AlertDialog.Builder(this).setTitle("Import previous episode history")
+            .setMessage("Stop the old episode writer and its scheduler first. Select a private ruizu-episodes export JSON for this player. This imports prior copy history and the episode cap, not Drive permissions or media, and never writes to the player.")
+            .setNegativeButton("Cancel",null).setPositiveButton("Choose export",(d,w)->{
+                pendingTarget=target;
+                Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE); i.setType("*/*");
+                i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/json","text/plain","application/octet-stream"});
+                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                try {startActivityForResult(i,LEGACY);} catch(ActivityNotFoundException e){showError(e);}
+            }).show();
+    }
     private void pick(boolean folder) {
         int index=players.getSelectedItemPosition();
         if(index<0||index>=ids.size()) { notice.setText("Bind an identified RUIZU first."); return; }
@@ -160,6 +175,17 @@ public final class EpisodeActivity extends Activity {
     }
     @Override protected void onActivityResult(int request,int result,Intent data) {
         super.onActivityResult(request,result,data);
+        if(request==LEGACY) {
+            if(result!=RESULT_OK||data==null||data.getData()==null||pendingTarget==null) return;
+            final Uri uri=data.getData(); final String target=pendingTarget;
+            task(q->{
+                try(java.io.InputStream in=getContentResolver().openInputStream(uri)) {
+                    int count=q.importLegacyHistory(target,in);
+                    main.post(()->notice.setText("Imported "+count+" historical episode records. No media or Drive permissions were changed."));
+                }
+            });
+            return;
+        }
         if((request!=TREE&&request!=FILES)||result!=RESULT_OK||data==null||pendingTarget==null) return;
         final String target=pendingTarget;
         final List<Uri> uris=new ArrayList<>();
