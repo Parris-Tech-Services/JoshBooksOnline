@@ -51,6 +51,8 @@ public final class EpisodeActivity extends Activity {
             task(q->{ q.bind(id,name,tree); reload(q,id); });
         });
         button(root,"Approve a show or video folder for this player",()->pick(true));
+        button(root,"Approve a shared Google Drive show",this::chooseSharedDrive);
+        button(root,"Episodes per show (default 1)",this::chooseEpisodeCap);
         button(root,"Add individual videos (including Drive)",()->pick(false));
         button(root,"Revoke all sources for selected player",()->{
             int index=players.getSelectedItemPosition();
@@ -114,6 +116,34 @@ public final class EpisodeActivity extends Activity {
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); players.setAdapter(adapter);
             int index=ids.indexOf(selected); if(index>=0) players.setSelection(index);
         });
+    }
+    private String selectedPlayer() {
+        int index=players.getSelectedItemPosition();
+        return index>=0&&index<ids.size()?ids.get(index):null;
+    }
+    private void chooseSharedDrive() {
+        final String target=selectedPlayer();
+        if(target==null) {notice.setText("Bind an identified player first.");return;}
+        LinearLayout fields=new LinearLayout(this); fields.setOrientation(LinearLayout.VERTICAL);
+        EditText show=new EditText(this); show.setHint("Approved show name"); fields.addView(show);
+        EditText link=new EditText(this); link.setHint("Shared Drive show folder link"); link.setSingleLine(true); fields.addView(link);
+        new AlertDialog.Builder(this).setTitle("Approve one show for selected player")
+            .setMessage("Use a folder already shared with link access. Select one show, not your entire TV library. The app will discover its subfolders on unmetered internet. No Google password is required.")
+            .setView(fields).setNegativeButton("Cancel",null).setPositiveButton("Approve",(d,w)->{
+                final String title=show.getText().toString(),address=link.getText().toString();
+                task(q->{q.addSharedDriveFolder(target,address,title); EpisodeRuntime.requestDiscovery(this);
+                    main.post(()->notice.setText("Approved shared show. Choose Process queue now to discover immediately."));});
+            }).show();
+    }
+    private void chooseEpisodeCap() {
+        final String target=selectedPlayer();
+        if(target==null) {notice.setText("Bind an identified player first.");return;}
+        EditText count=new EditText(this); count.setInputType(android.text.InputType.TYPE_CLASS_NUMBER); count.setText("1");
+        new AlertDialog.Builder(this).setTitle("New episodes per show per run").setView(count)
+            .setNegativeButton("Cancel",null).setPositiveButton("Save",(d,w)->{
+                final String raw=count.getText().toString();
+                task(q->{q.setPerShow(target,Integer.parseInt(raw));main.post(()->notice.setText("Episode cap saved."));});
+            }).show();
     }
     private void pick(boolean folder) {
         int index=players.getSelectedItemPosition();
