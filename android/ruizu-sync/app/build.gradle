@@ -91,7 +91,8 @@ def buildEpisodeCodec = tasks.register('buildEpisodeCodec', Exec) {
             episodeAssets.get().asFile.absolutePath, layout.buildDirectory.dir('episode-codec-cache').get().asFile.absolutePath
 }
 tasks.configureEach { task ->
-    if (task.name.matches('merge.*(JniLibFolders|NativeLibs|Assets)')) {
+    if (task.name.matches('merge.*(JniLibFolders|NativeLibs|Assets)') ||
+            task.name.toLowerCase(java.util.Locale.ROOT).contains('lint')) {
         task.dependsOn(buildEpisodeCodec)
     }
 }
