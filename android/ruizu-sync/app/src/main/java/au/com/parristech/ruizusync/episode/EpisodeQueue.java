@@ -162,6 +162,13 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                 PlayerFolderStore.hasPersistedPermission(context,tree) ? tree : null;
         }
     }
+    public Map<String,String> targets() {
+        Map<String,String> result=new LinkedHashMap<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT id,name FROM targets ORDER BY name,id",null)) {
+            while(c.moveToNext()) result.put(c.getString(0),c.getString(1));
+        }
+        return result;
+    }
     public String status() {
         StringBuilder b = new StringBuilder();
         try (Cursor c = getReadableDatabase().rawQuery(
@@ -177,11 +184,11 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         }
         return b.length()==0 ? "No episodes queued yet." : b.toString();
     }
-    public void run(BooleanSupplier stopped, int limit) throws Exception {
+    public void run(BooleanSupplier stopped, int limit, boolean transferOnly) throws Exception {
         if (!ACTIVE.compareAndSet(false,true)) return;
         try {
             if (!work.isDirectory() && !work.mkdirs()) throw new IOException("Cannot create app staging folder");
-            discover(stopped);
+            if (!transferOnly) discover(stopped);
             List<Row> rows = new ArrayList<>();
             try (Cursor c = getReadableDatabase().rawQuery("SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes WHERE stage!='verified' AND next_retry<=? ORDER BY CASE stage WHEN 'staged' THEN 0 ELSE 1 END, rowid",
                 new String[]{Long.toString(System.currentTimeMillis())})) {
@@ -193,9 +200,10 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                 if (stopped.getAsBoolean() || processed>=limit) return;
                 if (!targets.containsKey(r.target)) targets.put(r.target,targetTree(r.target));
                 Uri tree=targets.get(r.target);
+                if (transferOnly && !"staged".equals(r.stage)) continue;
                 if ("staged".equals(r.stage) && tree==null) continue;
                 try {
-                    prepare(r,stopped);
+                    if (!transferOnly) prepare(r,stopped);
                     if (tree!=null && !stopped.getAsBoolean()) transfer(r,tree,stopped);
                 } catch (Exception e) {
                     if (!stopped.getAsBoolean()) {
