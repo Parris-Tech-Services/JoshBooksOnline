@@ -192,4 +192,60 @@ public class EpisodeNativeTest {
             assertTrue(reopened.status().contains("paused, source approval required: 2"));
         } finally { c.deleteDatabase("video-episodes.db"); }
     }
+
+    @Test public void canonicalIdentityAndPerShowPlanDoNotRequeueHadOrRemoved() throws Exception {
+        Context c=context();
+        assertTrue(c.getPackageName().endsWith(".saftest"));
+        assertArrayEquals(new String[]{"Example Show","Example Show S02E11"},
+            EpisodeQueue.identity("Example.Show.S02E11.720p.mp4","Example Show","Season 2/Example.Show.S02E11.720p.mp4"));
+        assertArrayEquals(new String[]{"Example Show","Example Show S02E11"},
+            EpisodeQueue.identity("Example Show S02E11 - RUIZU.amv",null,null));
+        c.deleteDatabase("video-episodes.db");
+        try(EpisodeQueue q=new EpisodeQueue(c)) {
+            android.database.sqlite.SQLiteDatabase db=q.getWritableDatabase();
+            ContentValues player=new ContentValues();
+            player.put("id","test-player"); player.put("tree","content://test/tree/root"); player.put("name","Test player");
+            assertTrue(db.insert("targets",null,player)>=0);
+            for(int i=1;i<=5;i++) {
+                String id="episode-"+i;
+                addFixture(db,id,i==1?"present":i==2?"removed":"queued",1000-i,0);
+                ContentValues label=new ContentValues();
+                label.put("show_name","Example Show");
+                label.put("label",String.format(Locale.ROOT,"Example Show S01E%02d",i));
+                db.update("episodes",label,"id=?",new String[]{id});
+            }
+            q.setPerShow("test-player",1);
+            List<EpisodeQueue.Row> one=q.plan(false,new HashMap<>());
+            assertEquals(1,one.size()); assertEquals("episode-3",one.get(0).id);
+            q.setPerShow("test-player",2);
+            List<EpisodeQueue.Row> two=q.plan(false,new HashMap<>());
+            assertEquals(2,two.size()); assertEquals("episode-3",two.get(0).id); assertEquals("episode-4",two.get(1).id);
+        } finally { c.deleteDatabase("video-episodes.db"); }
+    }
+
+    @Test public void sharedDriveApprovalIsIdempotentAndRevocable() throws Exception {
+        Context c=context();
+        assertTrue(c.getPackageName().endsWith(".saftest"));
+        c.deleteDatabase("video-episodes.db");
+        try(EpisodeQueue q=new EpisodeQueue(c)) {
+            android.database.sqlite.SQLiteDatabase db=q.getWritableDatabase();
+            ContentValues player=new ContentValues();
+            player.put("id","test-player"); player.put("tree","content://test/tree/root"); player.put("name","Test player");
+            assertTrue(db.insert("targets",null,player)>=0);
+            String folder="https://drive.google.com/drive/folders/synthetic001";
+            q.addSharedDriveFolder("test-player",folder,"Example Show");
+            q.addSharedDriveFolder("test-player",folder,"Example Show");
+            try { q.addSharedDriveFolder("test-player",folder,"Different Show"); fail("Re-label accepted"); }
+            catch(IOException expected) {}
+            try(android.database.Cursor r=db.rawQuery("SELECT count(*) FROM drive_folders",null)) {
+                assertTrue(r.moveToFirst()); assertEquals(1,r.getInt(0));
+            }
+            q.revokeSources("test-player");
+            for(String table:Arrays.asList("drive_roots","drive_folders")) {
+                try(android.database.Cursor r=db.rawQuery("SELECT count(*) FROM "+table,null)) {
+                    assertTrue(r.moveToFirst()); assertEquals(0,r.getInt(0));
+                }
+            }
+        } finally { c.deleteDatabase("video-episodes.db"); }
+    }
 }
