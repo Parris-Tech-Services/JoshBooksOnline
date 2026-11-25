@@ -7,7 +7,7 @@ import java.util.*;
 
 /** Test APK only. Filesystem-backed DocumentsProvider with injectable USB faults. */
 public final class FakeUsbProvider extends DocumentsProvider {
-    static volatile boolean disconnected, full, corrupt, renameFails, blankNames;
+    static volatile boolean disconnected, full, corrupt, renameFails, blankNames, unsyncable;
     static final String AUTHORITY = "au.com.parristech.ruizusync.test.usb";
     static final Map<String,String> names = new LinkedHashMap<>();
     // Simulate real DocumentsProvider hierarchy for VIDEO/ and other folders.
@@ -16,13 +16,13 @@ public final class FakeUsbProvider extends DocumentsProvider {
     static File root;
     public boolean onCreate() { root = new File(getContext().getCacheDir(),"usb-test"); root.mkdirs(); return true; }
     static synchronized void reset() {
-        disconnected=full=corrupt=renameFails=blankNames=false;
+        disconnected=full=corrupt=renameFails=blankNames=unsyncable=false;
         names.clear(); parents.clear(); mimeTypes.clear();
         if (root != null && root.listFiles() != null) for (File f:root.listFiles()) f.delete();
     }
     private void connected() throws FileNotFoundException { if(disconnected) throw new FileNotFoundException("USB detached"); }
     @Override public synchronized Bundle call(String method, String argument, Bundle extras) {
-        if (!Arrays.asList("reset", "disconnected", "full", "corrupt", "renameFails", "blankNames",
+        if (!Arrays.asList("reset", "disconnected", "full", "corrupt", "renameFails", "blankNames", "unsyncable",
                 "addName", "mkTree", "state").contains(method)) {
             return super.call(method, argument, extras);
         }
@@ -31,6 +31,7 @@ public final class FakeUsbProvider extends DocumentsProvider {
         if (method.equals("full")) full=Boolean.parseBoolean(argument);
         if (method.equals("corrupt")) corrupt=Boolean.parseBoolean(argument);
         if (method.equals("renameFails")) renameFails=Boolean.parseBoolean(argument);
+        if (method.equals("unsyncable")) unsyncable=Boolean.parseBoolean(argument);
         // Simulates a sender that grants read access but exposes no display name, which is the
         // shape of another app sharing a MediaStore row whose projection is refused.
         if (method.equals("blankNames")) blankNames=Boolean.parseBoolean(argument);
@@ -115,6 +116,11 @@ public final class FakeUsbProvider extends DocumentsProvider {
     }
     public ParcelFileDescriptor openDocument(String id,String mode,CancellationSignal signal) throws FileNotFoundException {
         connected(); if(full && mode.contains("w")) throw new FileNotFoundException("Storage full");
+        // A write-only null device accepts bytes but refuses fsync. The real temporary
+        // file remains untouched, simulating a provider without durable descriptor writes.
+        if (unsyncable && mode.contains("w") && names.get(id).endsWith(".part")) {
+            return ParcelFileDescriptor.open(new File("/dev/null"),ParcelFileDescriptor.MODE_WRITE_ONLY);
+        }
         File file=new File(root,id);
         if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeTypes.get(id))) {
             throw new FileNotFoundException("Cannot open directory as file");

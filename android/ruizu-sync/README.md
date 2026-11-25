@@ -1,4 +1,4 @@
-# RUIZU Sync (Android) — 1.2.7
+# RUIZU Sync (Android) — 1.2.8
 
 Native, no-root companion for transferring music and podcasts from a Samsung phone (or Google
 Drive) to a RUIZU 64 GB MP3 player over USB. It is an independent Android app inside
@@ -72,15 +72,48 @@ written file when a copy fails or is cancelled.
 - **Resumable downloads** — interrupted HTTPS episode downloads continue from the bytes already on
   disk (`Range` + `.part` file) instead of starting over.
 
-## AMV movie handoff (1.2.7)
+## Native persistent video episode queue (1.2.8)
+
+Open **Video episode queue** in the existing RUIZU Sync APK. Select and identify the
+player root on the main screen, bind it in the queue, then choose a video library folder
+or individual videos from Android Files / Google Drive. A saved folder is scanned at
+most once per day unless explicitly refreshed. Every source version and player has a
+separate SQLite record, with queued, downloaded, staged, and verified checkpoints.
+Individual source grants and the queue survive application restarts.
+
+**Process queue now** runs the app's own foreground conversion service (no Termux).
+Enable automatic processing to schedule native persisted Android jobs on unmetered
+network with battery and storage guards. A connected player also triggers a transfer-only
+job when the main screen detects USB storage. Android schedules these jobs opportunistically;
+long conversions may need a user-initiated foreground run. A stopped download or conversion
+restarts that incomplete stage; completed stages are reused. An offline player does not
+prevent preparation of videos.
+
+FFmpeg 7.1.5 is built from signature-verified upstream source, bundled for arm64-v8a and
+x86_64 and launched from the app's native library directory. The exact corresponding
+source, build recipe and LGPL notice are included in the APK. Video output is AMV at
+160×128, 15 fps, ADPCM IMA AMV mono at 22050 Hz. Conversion checks codec, resolution,
+audio format, frame count and complete decoding before queueing. The existing SAF
+transactional writer checks the physical player marker before mutation and verifies the
+published file against the staged SHA-256. The player is never formatted and existing
+files are not overwritten. The queue does not touch audio, podcast or playlist selections.
+
+Google Drive may not offer a folder tree grant through Android's picker. Where that is
+the case, use **Add individual videos (including Drive)**. Direct account-wide Google
+Drive API/OAuth discovery is not implemented. Physical device acceptance (including
+cloud grants, long episode conversion, USB reconnect, and playback) is separate from CI.
+Build 1.2.8 using Gradle; the legacy offline APK builder has not been updated to package
+the native executables.
+
+## AMV movie handoff (1.2.7; retained for backwards compatibility)
 
 The physical RUIZU played the converted full film *Pay It Forward (2000)* in AMV at 160×128, 15 fps with 22.05 kHz mono ADPCM. This release adds **Add converted AMV movie** and an Android share target for `.amv`. AMV files are routed to `VIDEO/` under the chosen **player root** via the existing journalled, readback-verified SAF writer; they are not included in audio playlists. Unconverted MP4/MKV films are **not accepted** by the app.
 
-For a film stored in Google Drive, the companion **RUIZU Movie** Termux:Widget shortcut opens Android's Google Drive/Files document picker using Termux:API, converts the selected film to the hardware-tested AMV profile with FFmpeg, verifies output and shares it to RUIZU Sync. Setup/launcher: [tools/ruizu-drive-compare/README.md](../../tools/ruizu-drive-compare/README.md#ruizu-movie--android-home-screen-shortcut-amv-transfer-hand-off). Android still requires choosing the movie and confirming the USB transfer. Full live Drive-to-player acceptance on the Galaxy A55 is **not yet verified**.
+For a film stored in Google Drive, the companion **RUIZU Movie** Termux:Widget shortcut opens Android's Google Drive/Files document picker using Termux:API, converts the selected film to the hardware-tested AMV profile with FFmpeg, verifies output and shares it to RUIZU Sync. Setup/launcher: [tools/ruizu-drive-compare/README.md](../../tools/ruizu-drive-compare/README.md#ruizu-movie--android-home-screen-shortcut-amv-transfer-hand-off). That legacy route remains available, but the native video episode queue is the preferred route. Full live Drive-to-player acceptance on the Galaxy A55 is **not yet verified**.
 
 ## Supported formats
 
-MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF, and **already converted AMV** video. Unconverted MP4/MKV and other formats are reported as unsupported.
+MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF, and **already converted AMV** video. Original video formats such as MP4/MKV are handled by the Video episode queue, not the audio transfer picker.
 MP3 is the safest choice across RUIZU models; check the player manual for APE/OGG support.
 
 ## Limits and non-goals

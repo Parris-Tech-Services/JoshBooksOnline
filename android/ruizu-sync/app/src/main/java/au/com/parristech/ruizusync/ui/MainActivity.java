@@ -164,6 +164,7 @@ public final class MainActivity extends Activity implements TransferManager.List
         renderSelections();
         render(manager.snapshot());
         refreshUsb();
+        au.com.parristech.ruizusync.episode.EpisodeRuntime.ensureSchedule(this);
         ensureNotificationPermission();
         handleShareIntent(getIntent());
         maybeOfferResume();
@@ -246,6 +247,9 @@ public final class MainActivity extends Activity implements TransferManager.List
         folderParams.leftMargin = dp(8);
         sourceButtons.addView(addFolderButton, folderParams);
         sourceCard.addView(sourceButtons);
+        sourceCard.addView(secondaryButton("Video episode queue", v ->
+                startActivity(new Intent(this, au.com.parristech.ruizusync.episode.EpisodeActivity.class))),
+                margins(0, dp(6), 0, 0));
         sourceCard.addView(secondaryButton("Add converted AMV movie", v -> pickConvertedMovie()),
                 margins(0, dp(8), 0, 0));
         TextView videoHelp = label("Movies: select an AMV converted to 160×128 / 15 fps. "
@@ -1400,6 +1404,7 @@ public final class MainActivity extends Activity implements TransferManager.List
             useUsbButton.setEnabled(false);
             planOffered = false;
         } else {
+            au.com.parristech.ruizusync.episode.EpisodeRuntime.onPlayerConnected(this);
             maybeRestorePlayerFolder();
             maybeOfferPlan();
             StringBuilder sb = new StringBuilder("USB storage detected: ");

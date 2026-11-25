@@ -15,11 +15,18 @@ public final class SafTransfer {
     private final BooleanSupplier cancelled;
     private final String directoryId;
     private final boolean skipIdentical;
+    private final Context context;
+    private final String expectedDeviceId;
     private final Map<Uri, Long> sizes = new HashMap<>();
     public SafTransfer(Context context, BooleanSupplier cancelled) {
         this(context, cancelled, null, true);
     }
     public SafTransfer(Context context, BooleanSupplier cancelled, String directoryId, boolean skipIdentical) {
+        this(context, cancelled, directoryId, skipIdentical, null);
+    }
+    public SafTransfer(Context context, BooleanSupplier cancelled, String directoryId, boolean skipIdentical, String expectedDeviceId) {
+        this.context = context.getApplicationContext();
+        this.expectedDeviceId = expectedDeviceId;
         this.directoryId = directoryId;
         this.skipIdentical = skipIdentical;
         resolver = context.getContentResolver();
@@ -29,7 +36,14 @@ public final class SafTransfer {
     private String documentId(Uri tree) {
         return directoryId == null ? DocumentsContract.getTreeDocumentId(tree) : directoryId;
     }
-    private String journalKey(Uri tree) { return directoryId == null ? tree.toString() : tree + "|" + directoryId; }
+    private String journalKey(Uri tree) {
+        String key = directoryId == null ? tree.toString() : tree + "|" + directoryId;
+        return expectedDeviceId == null ? key : "device:" + expectedDeviceId + "|" + key;
+    }
+    private void requireTarget(Uri tree) throws IOException {
+        if (expectedDeviceId != null && !expectedDeviceId.equals(PlayerMarkerStore.read(context, tree).deviceId()))
+            throw new IOException("Correct RUIZU player is not connected");
+    }
     private Uri parent(Uri tree) {
         return DocumentsContract.buildDocumentUriUsingTree(tree, documentId(tree));
     }
@@ -50,12 +64,14 @@ public final class SafTransfer {
         return found;
     }
     private void recover(Uri tree) throws IOException {
+        requireTarget(tree);
         String old = journal.getString(journalKey(tree), null);
         if (old == null) return;
         Uri pending = Uri.parse(old);
         // The journal contains only documents returned by createDocument for this tree.
         String ownedName = journal.getString(journalKey(tree) + ":name", "");
         Map<String, Uri> files = children(tree);
+        requireTarget(tree);
         // A provider may keep the same document URI after rename. Never delete a published file.
         if (!ownedName.isEmpty() && pending.equals(files.get(ownedName))
                 && !DocumentsContract.deleteDocument(resolver, pending))
@@ -74,6 +90,7 @@ public final class SafTransfer {
         }
         if (size > VerifiedCopy.MAX_BYTES) throw new IOException("File exceeds FAT32 4 GiB limit");
         VerifiedCopy.checkCancelled(cancelled);
+        requireTarget(tree);
         recover(tree);
         Map<String, Uri> existing = children(tree);
         String free = name;
@@ -82,9 +99,11 @@ public final class SafTransfer {
             free = TransferUtils.withNumber(name, n);
         }
         String temporaryName = ".ruizu-" + UUID.randomUUID() + ".part";
+        requireTarget(tree);
         Uri temporary = DocumentsContract.createDocument(resolver, parent(tree), "application/octet-stream", temporaryName);
         if (temporary == null) throw new IOException("USB storage is read-only or full");
         if (!journal.edit().putString(journalKey(tree), temporary.toString()).putString(journalKey(tree) + ":name", temporaryName).commit()) {
+            requireTarget(tree);
             DocumentsContract.deleteDocument(resolver, temporary);
             throw new IOException("Could not record recovery information");
         }
@@ -93,10 +112,36 @@ public final class SafTransfer {
         try {
             byte[] hash;
             long[] written = {0};
-            try (OutputStream out = resolver.openOutputStream(temporary, "wt")) {
-                if (out == null) throw new IOException("Cannot write USB; reconnect or free space");
-                hash = VerifiedCopy.copy(source, out, size, cancelled, (bytes, total) -> { written[0] = bytes; progress.update(bytes, total); });
-            } // Closing must succeed before success or verification.
+            requireTarget(tree);
+            VerifiedCopy.Progress report = (bytes, total) -> {
+                written[0] = bytes;
+                progress.update(bytes, total);
+            };
+            if (expectedDeviceId != null) {
+                // Automatic episodes require a real file descriptor and a successful sync.
+                // A provider that exposes only a pipe or cannot flush is not safe for unattended
+                // publication. Do not fall back to cached readback or publish on failure.
+                android.os.ParcelFileDescriptor descriptor = resolver.openFileDescriptor(temporary, "wt");
+                if (descriptor == null) throw new IOException("Cannot open USB file descriptor for durable write");
+                try (android.os.ParcelFileDescriptor.AutoCloseOutputStream out =
+                        new android.os.ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
+                    hash = VerifiedCopy.copy(source, out, size, cancelled, report);
+                    VerifiedCopy.checkCancelled(cancelled);
+                    requireTarget(tree);
+                    try {
+                        out.getFD().sync();
+                    } catch (IOException syncError) {
+                        throw new IOException("USB durability sync failed; not publishing episode", syncError);
+                    }
+                }
+            } else {
+                // Preserve compatibility with the existing manual audio/SAF path.
+                try (OutputStream out = resolver.openOutputStream(temporary, "wt")) {
+                    if (out == null) throw new IOException("Cannot write USB; reconnect or free space");
+                    hash = VerifiedCopy.copy(source, out, size, cancelled, report);
+                }
+            } // Sync (where required) and close must succeed before verification.
+            requireTarget(tree);
             try (InputStream check = resolver.openInputStream(temporary)) {
                 if (check == null) throw new IOException("Cannot read USB for verification");
                 VerifiedCopy.verify(hash, check, cancelled);
@@ -111,6 +156,7 @@ public final class SafTransfer {
                 }
             }
             VerifiedCopy.checkCancelled(cancelled);
+            requireTarget(tree);
             if (DocumentsContract.renameDocument(resolver, temporary, free) == null)
                 throw new IOException("USB provider cannot finalise this file; transfer not completed");
             published = true;
@@ -122,6 +168,7 @@ public final class SafTransfer {
         } finally {
             if (!published) {
                 try {
+                    requireTarget(tree);
                     if (!DocumentsContract.deleteDocument(resolver, temporary)) throw new IOException("Incomplete file cleanup failed");
                     journal.edit().remove(journalKey(tree)).remove(journalKey(tree) + ":name").commit();
                 } catch (Exception cleanup) {

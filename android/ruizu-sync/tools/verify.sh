@@ -30,6 +30,12 @@ unzip -l "$APK" > "$WORK/zip.txt" 2>&1
 sed -n '1,40p' "$WORK/zip.txt"
 grep -q 'classes.dex' "$WORK/zip.txt" && ok "classes.dex present" || fail "classes.dex missing"
 grep -q 'resources.arsc' "$WORK/zip.txt" && ok "resources.arsc present" || fail "resources.arsc missing"
+for abi in arm64-v8a x86_64; do
+  for program in ffmpeg ffprobe; do
+    grep -q "lib/$abi/libruizu_$program.so" "$WORK/zip.txt" && ok "$abi $program bundled" || fail "$abi $program missing"
+  done
+done
+grep -q "assets/ffmpeg/ffmpeg-7.1.5.tar.xz" "$WORK/zip.txt" || fail "FFmpeg corresponding source missing"
 
 # ---------------------------------------------------------------------------------------
 report "dex payload"
@@ -44,7 +50,7 @@ done
 ok "dex magic valid"
 for cls in ui/MainActivity TransferService TransferManager net/RemoteAudio net/FeedScanner \
            core/DuplicateMatcher core/FolderPlanner core/MediaTypes 'core/FolderPlanner$OrganiseMode' \
-           audio/Mp3Encoder audio/AudioTranscoder core/Opml core/ConversionPolicy; do
+           audio/Mp3Encoder audio/AudioTranscoder core/Opml core/ConversionPolicy episode/EpisodeActivity episode/EpisodeQueue 'episode/EpisodeRuntime$Scheduled'; do
   found=no
   for dex in "$WORK"/dex/classes*.dex; do
     if [ -f "$dex" ] && grep -a -qF "Lau/com/parristech/ruizusync/$cls;" "$dex"; then
