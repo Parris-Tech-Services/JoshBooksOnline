@@ -120,7 +120,7 @@ public class EpisodeNativeTest {
     private static void addFixture(android.database.sqlite.SQLiteDatabase db,String id,String stage,long size,long retry) {
         ContentValues row=new ContentValues();
         row.put("target","test-player"); row.put("id",id); row.put("uri","content://test/"+id);
-        row.put("name",id+".mp4"); row.put("bytes",size); row.put("stage",stage); row.put("next_retry",retry);
+        row.put("name",id+".mp4"); row.put("bytes",size); row.put("stage",stage); row.put("next_retry",retry); row.put("approved",1);
         assertTrue(db.insert("episodes",null,row)>=0);
     }
     private static List<String> ids(android.database.sqlite.SQLiteDatabase db,String sql) {
@@ -152,6 +152,44 @@ public class EpisodeNativeTest {
             try(android.database.Cursor row=q.getReadableDatabase().rawQuery("SELECT count(*) FROM libraries",null)) {
                 assertTrue(row.moveToFirst()); assertEquals(1,row.getInt(0));
             }
+        } finally { c.deleteDatabase("video-episodes.db"); }
+    }
+
+    @Test public void revokeBlocksBothStagesForOnlySelectedPlayerAndPreservesHistory() throws Exception {
+        Context c=context();
+        assertTrue(c.getPackageName().endsWith(".saftest"));
+        c.deleteDatabase("video-episodes.db");
+        try(EpisodeQueue q=new EpisodeQueue(c)) {
+            android.database.sqlite.SQLiteDatabase db=q.getWritableDatabase();
+            for(String targetId:Arrays.asList("test-player","other-player")) {
+                ContentValues target=new ContentValues();
+                target.put("id",targetId);
+                target.put("tree","content://com.android.externalstorage.documents/tree/TEST%3A");
+                target.put("name",targetId);
+                assertTrue(db.insert("targets",null,target)>=0);
+                q.addLibrary(targetId,android.net.Uri.parse("content://com.android.externalstorage.documents/tree/primary%3AMovies"));
+            }
+            addFixture(db,"queued","queued",100,0);
+            addFixture(db,"ready","staged",100,0);
+            addFixture(db,"done","verified",100,0);
+            ContentValues other=new ContentValues();
+            other.put("target","other-player"); other.put("id","other");
+            other.put("uri","content://test/other"); other.put("name","other.mp4");
+            other.put("bytes",100); other.put("stage","queued"); other.put("approved",1);
+            assertTrue(db.insert("episodes",null,other)>=0);
+            q.revokeSources("test-player");
+            assertEquals(Collections.emptyList(),ids(db,EpisodeQueue.DUE_STAGED_SQL));
+            assertEquals(Arrays.asList("other"),ids(db,EpisodeQueue.DUE_PREPARE_SQL));
+            try(android.database.Cursor row=db.rawQuery("SELECT count(*) FROM episodes WHERE target='test-player'",null)) {
+                assertTrue(row.moveToFirst()); assertEquals(3,row.getInt(0));
+            }
+            try(android.database.Cursor row=db.rawQuery("SELECT target FROM libraries",null)) {
+                assertTrue(row.moveToFirst()); assertEquals("other-player",row.getString(0)); assertFalse(row.moveToNext());
+            }
+        }
+        try(EpisodeQueue reopened=new EpisodeQueue(c)) {
+            assertEquals(Arrays.asList("other"),ids(reopened.getReadableDatabase(),EpisodeQueue.DUE_PREPARE_SQL));
+            assertTrue(reopened.status().contains("paused, source approval required: 2"));
         } finally { c.deleteDatabase("video-episodes.db"); }
     }
 }
