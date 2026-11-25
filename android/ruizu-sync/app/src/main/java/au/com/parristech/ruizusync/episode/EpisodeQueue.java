@@ -37,17 +37,24 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     private final Context context;
     private final File work;
     public EpisodeQueue(Context c) {
-        super(c.getApplicationContext(), "video-episodes.db", null, 1);
+        super(c.getApplicationContext(), "video-episodes.db", null, 2);
         context = c.getApplicationContext();
         work = new File(context.getFilesDir(), "episode-staging");
     }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE targets (id TEXT PRIMARY KEY, tree TEXT NOT NULL, name TEXT NOT NULL)");
         db.execSQL("CREATE TABLE libraries (target TEXT NOT NULL, tree TEXT NOT NULL, last_scan INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,tree))");
-        db.execSQL("CREATE TABLE episodes (target TEXT NOT NULL, id TEXT NOT NULL, uri TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'queued', sha TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,id))");
+        db.execSQL("CREATE TABLE episodes (target TEXT NOT NULL, id TEXT NOT NULL, uri TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'queued', sha TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)), PRIMARY KEY(target,id))");
         db.execSQL("CREATE INDEX episode_due ON episodes(stage,next_retry)");
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion==1 && newVersion==2) {
+            // No speculative approval of older individual documents. Explicit saved trees
+            // will be rediscovered; the user can reselect individual files. Keep all history.
+            db.execSQL("ALTER TABLE episodes ADD COLUMN approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1))");
+            db.execSQL("UPDATE libraries SET last_scan=0");
+            return;
+        }
         throw new IllegalStateException("Missing episode database migration");
     }
     public void bind(String id, String name, Uri tree) throws IOException {
@@ -86,6 +93,29 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         ContentValues v = new ContentValues(); v.put("target", target); v.put("tree", tree.toString());
         getWritableDatabase().insertWithOnConflict("libraries", null, v, SQLiteDatabase.CONFLICT_IGNORE);
     }
+    /** Stops all future video work for one player without deleting any media or ledger rows.
+     * Exclusive with run(), so success means no previously selected row can publish afterwards.
+     * Do not release shared SAF grants: music and other players may legitimately use them.
+     */
+    public void revokeSources(String target) throws IOException {
+        if (target==null) throw new IOException("Choose a saved player");
+        if (!ACTIVE.compareAndSet(false,true))
+            throw new IOException("Pause the current worker and disable automatic processing before revoking sources");
+        try {
+            SQLiteDatabase db=getWritableDatabase();
+            db.beginTransaction();
+            try {
+                try (Cursor c=db.rawQuery("SELECT id FROM targets WHERE id=?",new String[]{target})) {
+                    if(!c.moveToFirst()) throw new IOException("Unknown player");
+                }
+                db.delete("libraries","target=?",new String[]{target});
+                ContentValues values=new ContentValues();
+                values.put("approved",0);
+                db.update("episodes",values,"target=?",new String[]{target});
+                db.setTransactionSuccessful();
+            } finally { db.endTransaction(); }
+        } finally { ACTIVE.set(false); }
+    }
     public void refreshCatalogue() {
         getWritableDatabase().execSQL("UPDATE libraries SET last_scan=0");
     }
@@ -113,7 +143,18 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         ContentValues v = new ContentValues();
         v.put("target", target); v.put("id", id); v.put("uri", uri.toString());
         v.put("name", name); v.put("bytes", size);
-        getWritableDatabase().insertWithOnConflict("episodes", null, v, SQLiteDatabase.CONFLICT_IGNORE);
+        v.put("approved",1);
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.insertWithOnConflict("episodes",null,v,SQLiteDatabase.CONFLICT_IGNORE);
+            // Reselecting exactly the same source version restores approval without resetting
+            // its verified status, staged hash or retry history.
+            ContentValues approved=new ContentValues();
+            approved.put("approved",1);
+            db.update("episodes",approved,"target=? AND id=?",new String[]{target,id});
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
     }
     private static String hex(byte[] bytes) {
         StringBuilder b = new StringBuilder();
@@ -205,16 +246,20 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         try (Cursor c = getReadableDatabase().rawQuery("SELECT error FROM libraries WHERE error!='' LIMIT 3",null)) {
             while (c.moveToNext()) b.append("Catalogue: ").append(c.getString(0)).append('\n');
         }
+        try (Cursor c=getReadableDatabase().rawQuery(
+            "SELECT targets.name,count(*) FROM episodes JOIN targets ON targets.id=episodes.target WHERE episodes.approved=0 AND episodes.stage!='verified' GROUP BY targets.id,targets.name",null)) {
+            while(c.moveToNext()) b.append(c.getString(0)).append(" · paused, source approval required: ").append(c.getInt(1)).append('\n');
+        }
         return b.length()==0 ? "No episodes queued yet." : b.toString();
     }
     // Two passes are intentional: a slow or unavailable Drive must never delay a
     // prepared copy. The download limit applies only to preparation, not to USB.
     static final String DUE_STAGED_SQL =
         "SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes " +
-        "WHERE stage='staged' AND next_retry<=? ORDER BY rowid";
+        "WHERE approved=1 AND stage='staged' AND next_retry<=? ORDER BY rowid";
     static final String DUE_PREPARE_SQL =
         "SELECT target,id,uri,name,bytes,stage,sha,attempts FROM episodes " +
-        "WHERE stage NOT IN ('staged','verified') AND next_retry<=? " +
+        "WHERE approved=1 AND stage NOT IN ('staged','verified') AND next_retry<=? " +
         "ORDER BY CASE WHEN bytes>0 THEN 0 ELSE 1 END,bytes,rowid";
 
     private List<Row> dueRows(boolean staged) {
