@@ -14,6 +14,8 @@ import au.com.parristech.ruizusync.SafTransfer;
 import au.com.parristech.ruizusync.TransferManager;
 import au.com.parristech.ruizusync.core.HashUtil;
 import au.com.parristech.ruizusync.core.EpisodePlan;
+import au.com.parristech.ruizusync.core.DriveEpisodeProtocol;
+import au.com.parristech.ruizusync.core.DriveEpisodeSource;
 import au.com.parristech.ruizusync.core.FileNameSanitizer;
 import au.com.parristech.ruizusync.io.DestRepo;
 import au.com.parristech.ruizusync.io.SourceRepo;
@@ -38,7 +40,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     private final Context context;
     private final File work;
     public EpisodeQueue(Context c) {
-        super(c.getApplicationContext(), "video-episodes.db", null, 3);
+        super(c.getApplicationContext(), "video-episodes.db", null, 4);
         context = c.getApplicationContext();
         work = new File(context.getFilesDir(), "episode-staging");
     }
@@ -47,6 +49,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE libraries (target TEXT NOT NULL, tree TEXT NOT NULL, last_scan INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,tree))");
         db.execSQL("CREATE TABLE episodes (target TEXT NOT NULL, id TEXT NOT NULL, uri TEXT NOT NULL, name TEXT NOT NULL, bytes INTEGER NOT NULL, stage TEXT NOT NULL DEFAULT 'queued', sha TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_retry INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', approved INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)), label TEXT NOT NULL DEFAULT '', show_name TEXT NOT NULL DEFAULT '', player_name TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,id))");
         db.execSQL("CREATE INDEX episode_due ON episodes(stage,next_retry)");
+        createDriveTables(db);
     }
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         if (oldVersion==1 && newVersion>=2) {
@@ -56,7 +59,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             db.execSQL("UPDATE libraries SET last_scan=0");
             oldVersion=2;
         }
-        if(oldVersion==2 && newVersion==3) {
+        if(oldVersion==2 && newVersion>=3) {
             db.execSQL("ALTER TABLE targets ADD COLUMN per_show INTEGER NOT NULL DEFAULT 1 CHECK(per_show BETWEEN 1 AND 20)");
             db.execSQL("ALTER TABLE episodes ADD COLUMN label TEXT NOT NULL DEFAULT ''");
             db.execSQL("ALTER TABLE episodes ADD COLUMN show_name TEXT NOT NULL DEFAULT ''");
@@ -65,9 +68,83 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             // saved trees and require explicit reselection for older individual sources.
             db.execSQL("UPDATE episodes SET approved=0 WHERE stage!='verified'");
             db.execSQL("UPDATE libraries SET last_scan=0");
-            return;
+            oldVersion=3;
         }
+        if(oldVersion==3 && newVersion==4) { createDriveTables(db); oldVersion=4; }
         if(oldVersion!=newVersion) throw new IllegalStateException("Missing episode database migration");
+    }
+    private static final long DRIVE_TTL=7*DAY, DOWNLOAD_BUDGET=1500L*1024*1024;
+    private long remainingDownload=DOWNLOAD_BUDGET;
+    private static void createDriveTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE drive_roots (target TEXT NOT NULL, root TEXT NOT NULL, show_name TEXT NOT NULL, PRIMARY KEY(target,root))");
+        db.execSQL("CREATE TABLE drive_folders (target TEXT NOT NULL, root TEXT NOT NULL, folder TEXT NOT NULL, path TEXT NOT NULL, last_scan INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(target,root,folder))");
+        db.execSQL("CREATE INDEX drive_scan_due ON drive_folders(last_scan)");
+    }
+    public void addSharedDriveFolder(String target,String link,String showName) throws IOException {
+        String root=DriveEpisodeProtocol.folderId(link);
+        String show=EpisodePlan.cleanText(showName);
+        if(show.isEmpty()) throw new IOException("Enter the approved show name");
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try {
+            try(Cursor c=db.rawQuery("SELECT id FROM targets WHERE id=?",new String[]{target})) {
+                if(!c.moveToFirst()) throw new IOException("Bind the selected player first");
+            }
+            ContentValues approved=new ContentValues();
+            approved.put("target",target); approved.put("root",root); approved.put("show_name",show);
+            db.insertWithOnConflict("drive_roots",null,approved,SQLiteDatabase.CONFLICT_IGNORE);
+            // Refuse silently re-labelling an already approved root. Revoke it explicitly first.
+            try(Cursor c=db.rawQuery("SELECT show_name FROM drive_roots WHERE target=? AND root=?",new String[]{target,root})) {
+                if(!c.moveToFirst()||!show.equals(c.getString(0))) throw new IOException("This folder is already approved under a different show name");
+            }
+            addDriveFolder(db,target,root,root,"");
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+    private static void addDriveFolder(SQLiteDatabase db,String target,String root,String id,String path) {
+        ContentValues v=new ContentValues(); v.put("target",target); v.put("root",root);
+        v.put("folder",id); v.put("path",path);
+        db.insertWithOnConflict("drive_folders",null,v,SQLiteDatabase.CONFLICT_IGNORE);
+    }
+    private boolean unmetered() {
+        android.net.ConnectivityManager manager=context.getSystemService(android.net.ConnectivityManager.class);
+        return manager!=null&&manager.getActiveNetwork()!=null&&!manager.isActiveNetworkMetered();
+    }
+    private static boolean directDrive(Row r) {
+        return "ruizu-drive".equals(Uri.parse(r.uri).getScheme());
+    }
+    /** Cached frontier: a large show is incrementally walked, not restarted after 40 listings. */
+    private void discoverDrive(BooleanSupplier stopped) throws Exception {
+        if(!unmetered()) return;
+        DriveEpisodeSource client=new DriveEpisodeSource();
+        for(int scanned=0;scanned<40;scanned++) {
+            if(stopped.getAsBoolean()||!unmetered()) return;
+            String[] next=null;
+            try(Cursor c=getReadableDatabase().rawQuery(
+                "SELECT f.target,f.root,f.folder,f.path,r.show_name FROM drive_folders f JOIN drive_roots r ON r.target=f.target AND r.root=f.root WHERE f.last_scan<=? ORDER BY f.last_scan,f.rowid LIMIT 1",
+                new String[]{Long.toString(System.currentTimeMillis()-DRIVE_TTL)})) {
+                if(c.moveToFirst()) next=new String[]{c.getString(0),c.getString(1),c.getString(2),c.getString(3),c.getString(4)};
+            }
+            if(next==null) return;
+            String error=""; long finished=System.currentTimeMillis();
+            try {
+                List<DriveEpisodeProtocol.Entry> entries=client.list(next[2],stopped);
+                for(DriveEpisodeProtocol.Entry entry:entries) {
+                    if(stopped.getAsBoolean()||!unmetered()) return;
+                    String relative=next[3]+"/"+entry.name;
+                    if(relative.length()>2000) throw new IOException("Drive folder nesting exceeds limit");
+                    if(entry.folder) addDriveFolder(getWritableDatabase(),next[0],next[1],entry.id,relative);
+                    else if(EpisodeCodec.supported(entry.name)) {
+                        Uri uri=Uri.parse("ruizu-drive://file/"+DriveEpisodeProtocol.fileId(entry.id));
+                        insert(next[0],uri,entry.name,-1,0,next[4],relative);
+                    }
+                }
+            } catch(Exception e) {
+                error=message(e); finished-=DRIVE_TTL-15*60_000L;
+            }
+            ContentValues v=new ContentValues(); v.put("last_scan",finished); v.put("error",error);
+            getWritableDatabase().update("drive_folders",v,"target=? AND root=? AND folder=?",new String[]{next[0],next[1],next[2]});
+        }
     }
     public void bind(String id, String name, Uri tree) throws IOException {
         if (id == null || !id.equals(PlayerMarkerStore.read(context, tree).deviceId())
@@ -123,6 +200,8 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
                     if(!c.moveToFirst()) throw new IOException("Unknown player");
                 }
                 db.delete("libraries","target=?",new String[]{target});
+                db.delete("drive_folders","target=?",new String[]{target});
+                db.delete("drive_roots","target=?",new String[]{target});
                 ContentValues values=new ContentValues();
                 values.put("approved",0);
                 db.update("episodes",values,"target=?",new String[]{target});
@@ -138,6 +217,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
     }
     public void refreshCatalogue() {
         getWritableDatabase().execSQL("UPDATE libraries SET last_scan=0");
+        getWritableDatabase().execSQL("UPDATE drive_folders SET last_scan=0");
     }
     public void retry() {
         getWritableDatabase().execSQL("UPDATE episodes SET next_retry=0, attempts=0, error='' WHERE stage!='verified'");
@@ -301,6 +381,9 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             "SELECT targets.name,count(*) FROM episodes JOIN targets ON targets.id=episodes.target WHERE episodes.approved=0 AND episodes.stage!='verified' GROUP BY targets.id,targets.name",null)) {
             while(c.moveToNext()) b.append(c.getString(0)).append(" · paused, source approval required: ").append(c.getInt(1)).append('\n');
         }
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT error FROM drive_folders WHERE error!='' LIMIT 3",null)) {
+            while(c.moveToNext()) b.append("Shared Drive: ").append(c.getString(0)).append('\n');
+        }
         return b.length()==0 ? "No episodes queued yet." : b.toString();
     }
     // Two passes are intentional: a slow or unavailable Drive must never delay a
@@ -385,8 +468,9 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             try {
                 // Re-read identity rather than caching a previous USB connection.
                 Uri tree=targetTree(r.target);
-                if(staged&&tree==null) continue;
+                if(!staged&&directDrive(r)&&(!unmetered()||remainingDownload<=0)) continue;
                 used.put(useKey(r),used.getOrDefault(useKey(r),0)+1);
+                if(staged&&tree==null) continue;
                 if(!staged) prepare(r,stopped);
                 if(!stopped.getAsBoolean()) {
                     tree=targetTree(r.target);
@@ -406,11 +490,13 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         if(!ACTIVE.compareAndSet(false,true)) return false;
         try {
             if(!work.isDirectory()&&!work.mkdirs()) throw new IOException("Cannot create app staging folder");
+            remainingDownload=DOWNLOAD_BUDGET;
             Map<String,Integer> used=new HashMap<>();
             reconcilePlayers(stopped);
             processRows(plan(true,used),stopped,Integer.MAX_VALUE,true,used);
             if(!transferOnly&&!stopped.getAsBoolean()) {
                 discover(stopped);
+                discoverDrive(stopped);
                 reconcilePlayers(stopped);
                 if(!stopped.getAsBoolean()) processRows(plan(false,used),stopped,limit,false,used);
             }
@@ -473,10 +559,19 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         if ("staged".equals(r.stage) && r.sha!=null && output.isFile() && r.sha.equals(hash(output))) return;
         if ("staged".equals(r.stage)) update(r,"queued",null,"",0,0);
         if (!"downloaded".equals(r.stage) || !source.isFile() || (r.bytes>=0 && source.length()!=r.bytes)) {
-            if (new SourceRepo(context).isDrmProtected(Uri.parse(r.uri))) throw new IOException("DRM protected video is unsupported");
+            if (!directDrive(r)&&new SourceRepo(context).isDrmProtected(Uri.parse(r.uri))) throw new IOException("DRM protected video is unsupported");
             if (r.bytes>MAX_SOURCE || (r.bytes>0 && work.getUsableSpace()-RESERVE<r.bytes)) throw new IOException("Not enough phone storage for source");
             update(r,"queued",null,"",r.attempts,0);
-            try (InputStream in=context.getContentResolver().openInputStream(Uri.parse(r.uri));
+            if(directDrive(r)) {
+                if(!unmetered()) throw new IOException("Waiting for an unmetered network");
+                try {
+                    new DriveEpisodeSource().download(Uri.parse(r.uri).getLastPathSegment(),part,remainingDownload,RESERVE,
+                        ()->stopped.getAsBoolean()||!unmetered());
+                } finally {
+                    // Conservative budget accounting includes any existing partial bytes.
+                    remainingDownload=Math.max(0,remainingDownload-part.length());
+                }
+            } else try (InputStream in=context.getContentResolver().openInputStream(Uri.parse(r.uri));
                  FileOutputStream out=new FileOutputStream(part,false)) {
                 if (in==null) throw new IOException("Source unavailable; check the Drive or Files permission");
                 byte[] buf=new byte[128*1024]; long total=0; int n;
@@ -490,6 +585,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
             }
             if (!part.renameTo(source)) throw new IOException("Could not checkpoint download");
             update(r,"downloaded",null,"",r.attempts,0);
+            if(directDrive(r)) DriveEpisodeSource.finish(part);
         }
         check(stopped);
         JSONObject info=probe(source,false,stopped);
