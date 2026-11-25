@@ -59,8 +59,30 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         v.put("id", id); v.put("tree", tree.toString()); v.put("name", name == null ? "Player" : name);
         getWritableDatabase().insertWithOnConflict("targets", null, v, SQLiteDatabase.CONFLICT_REPLACE);
     }
+    /** A source must be explicitly assigned to a saved target and never be its own USB volume. */
+    private void requireSource(String target, Uri source) throws IOException {
+        if (target==null || source==null) throw new IOException("Choose an identified player and a source");
+        try (Cursor c=getReadableDatabase().rawQuery("SELECT tree FROM targets WHERE id=?",new String[]{target})) {
+            if(!c.moveToFirst()) throw new IOException("Bind the selected player first");
+            Uri destination=Uri.parse(c.getString(0));
+            if(destination.equals(source)) throw new IOException("Source cannot be the player destination");
+            if("com.android.externalstorage.documents".equals(destination.getAuthority()) &&
+                    destination.getAuthority().equals(source.getAuthority())) {
+                String destId=DocumentsContract.getTreeDocumentId(destination);
+                String sourceId=DocumentsContract.isTreeUri(source)
+                    ? DocumentsContract.getTreeDocumentId(source) : DocumentsContract.getDocumentId(source);
+                // SAF volume ids are not reliable player identities; they are nevertheless
+                // sufficient to reject reading from the same storage volume as the destination.
+                String destVolume=destId.split(":",2)[0];
+                String sourceVolume=sourceId.split(":",2)[0];
+                if(destVolume.equalsIgnoreCase(sourceVolume))
+                    throw new IOException("Select a source outside the player's storage volume");
+            }
+        }
+    }
     public void addLibrary(String target, Uri tree) throws IOException {
-        if (target == null || !DocumentsContract.isTreeUri(tree)) throw new IOException("Choose a player and folder");
+        if (tree==null || !DocumentsContract.isTreeUri(tree)) throw new IOException("Choose a player and folder");
+        requireSource(target,tree);
         ContentValues v = new ContentValues(); v.put("target", target); v.put("tree", tree.toString());
         getWritableDatabase().insertWithOnConflict("libraries", null, v, SQLiteDatabase.CONFLICT_IGNORE);
     }
@@ -71,6 +93,7 @@ public final class EpisodeQueue extends SQLiteOpenHelper {
         getWritableDatabase().execSQL("UPDATE episodes SET next_retry=0, attempts=0, error='' WHERE stage!='verified'");
     }
     public void addFile(String target, Uri uri) throws Exception {
+        requireSource(target,uri);
         String name = null; long bytes = -1, modified = 0;
         try (Cursor c = context.getContentResolver().query(uri,
             new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED},
