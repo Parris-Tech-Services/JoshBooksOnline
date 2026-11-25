@@ -115,6 +115,7 @@ record and the two cannot disagree. The app needs Termux's `com.termux.permissio
 | `retry LABEL... \| --all` | Try failed episodes again |
 | `log [-n N]` | Recent events |
 | `restore-backup` | Put back the database snapshot taken at the start of the last run |
+| `check-player [--repair]` | Finds truncated or unplayable AMV files on the connected player without needing a staged copy: the AMV header records the intended length, so a file cut short by a pulled cable shows fewer frames than its header promises. Read-only by default (exit 2 if anything needs attention). `--repair` deletes only proven-truncated copies of this tool's own episodes so the next run re-prepares and re-copies them |
 | `export [--output FILE]` | Read-only JSON for migrating to the native app: players, allowlists, per-player copy states (verified, present, removed) and staged SHA-256 values, keyed by episode label. No Drive ids or paths, but it names players and shows: keep it private |
 | `schedule [--every MIN]`, `unschedule` | Termux job scheduler |
 

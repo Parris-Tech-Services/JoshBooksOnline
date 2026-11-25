@@ -22,11 +22,12 @@ import time
 from contextlib import closing, contextmanager
 from pathlib import Path
 
-from . import __version__, library, planner, player, termux
+from . import __version__, check, library, planner, player, termux
 from . import config as cfg
 from .config import ALL_SHOWS, Config, ConfigError, PlayerPolicy
 from .drive import DriveClient
 from .export import export_state
+from .media import Media
 from .pipeline import MB, Pipeline, RunOptions
 from .process import Runner
 from .settings import Settings
@@ -266,6 +267,22 @@ def cmd_export(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_player(ctx: Context, args: argparse.Namespace) -> int:
+    """Read-only unless --repair. Exit 2 when any file still needs attention."""
+    with exclusive(ctx.settings.lock_path):
+        root = _mounted_root(ctx, args.root)
+        identity = player.read_identity(root)
+        pid = identity.id if identity and identity.id in ctx.config.players else None
+        if args.repair and pid is None:
+            raise ConfigError("--repair needs a player that is claimed and set up here (claim, then allow)")
+        print(f"checking every AMV in {root}/VIDEO (this reads each file once; allow a minute or two)")
+        reports = check.check_player(ctx.store, Media(ctx.runner), root, pid, args.repair, int(ctx.clock()))
+    for report in reports:
+        print(check.describe(report))
+    print(check.summary(reports))
+    return 2 if check.needs_attention(reports) else 0
+
+
 def cmd_shows(ctx: Context, _args: argparse.Namespace) -> int:
     known: dict[str, list[str]] = {show: [] for show in ctx.store.shows()}
     for ep in ctx.store.episodes("kind != 'duplicate'"):
@@ -363,7 +380,7 @@ COMMANDS = {
     "claim": cmd_claim, "allow": cmd_allow, "deny": cmd_deny, "per-show": cmd_per_show,
     "add-root": cmd_add_root, "shows": cmd_shows, "retry": cmd_retry, "log": cmd_log,
     "restore-backup": cmd_restore, "schedule": cmd_schedule, "unschedule": cmd_unschedule,
-    "export": cmd_export,
+    "export": cmd_export, "check-player": cmd_check_player,
 }
 
 
@@ -413,6 +430,11 @@ def build_parser() -> argparse.ArgumentParser:
     export = sub.add_parser("export", help="read-only JSON of players, allowlists, copy states and staged hashes "
                                            "(for migrating to the app; private, never commit it)")
     export.add_argument("--output", help="write to this file instead of standard output")
+    checkp = sub.add_parser("check-player", help="find truncated or unplayable AMV files on the connected player "
+                                                 "(read-only unless --repair)")
+    checkp.add_argument("--repair", action="store_true",
+                        help="delete only proven-truncated copies of this tool's episodes; the next run replaces them")
+    checkp.add_argument("--root", help="player mount (default: the usual mount point)")
     schedule = sub.add_parser("schedule", help="run automatically with the Termux job scheduler")
     schedule.add_argument("--every", type=int, default=15, help="minutes between runs (Android minimum 15)")
     sub.add_parser("unschedule", help="stop the automatic runs")
