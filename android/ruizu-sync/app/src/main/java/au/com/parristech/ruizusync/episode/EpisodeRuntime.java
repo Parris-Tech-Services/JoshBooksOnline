@@ -71,7 +71,9 @@ public final class EpisodeRuntime {
             new Thread(()->{
                 boolean retry=false;
                 try(EpisodeQueue queue=new EpisodeQueue(this)) {
-                    queue.run(()->stop.get() || !enabled(this),id==USB?Integer.MAX_VALUE:1,id==USB);
+                    boolean ran=queue.run(()->stop.get() || !enabled(this),id==USB?Integer.MAX_VALUE:1,id==USB);
+                    // A mount event that arrives during conversion must not be lost.
+                    retry=!ran && id==USB;
                 } catch(Exception e) {
                     android.util.Log.w("RUIZU","Episode scheduled worker paused",e);
                     retry=true;
