@@ -9,8 +9,7 @@ from pathlib import Path
 from ruizu_episodes import player
 from ruizu_episodes.config import PlayerPolicy
 from ruizu_episodes.media import Media, sha256_file
-from ruizu_episodes.names import (PLAYER_SUFFIX, legacy_player_filename, player_filename,
-                                  player_relative_path)
+from ruizu_episodes.names import PLAYER_SUFFIX, legacy_player_filename, player_filename, player_relative_path
 from ruizu_episodes.pipeline import Pipeline, RunOptions
 from ruizu_episodes.process import Runner
 from ruizu_episodes.store import Store
