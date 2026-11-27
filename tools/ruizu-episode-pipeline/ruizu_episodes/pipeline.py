@@ -18,7 +18,7 @@ from . import library, planner, player, termux
 from .config import Config, PlayerPolicy
 from .drive import DriveClient, DriveError
 from .media import Media, MediaError, sha256_file
-from .names import legacy_player_filename, player_filename, player_relative_path, player_spellings
+from .names import player_relative_path, player_spellings
 from .process import Runner
 from .settings import Settings
 from .store import Episode, Store
