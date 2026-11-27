@@ -10,6 +10,19 @@
 
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
+    <!--
+      The episode pipeline runs in Termux, which owns the record of what each player already has.
+      This app only starts one bounded run and reads the log it leaves on the player, so it needs
+      Termux's run-command permission. Termux grants it, and Termux must also have
+      allow-external-apps=true in ~/.termux/termux.properties.
+    -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <!-- Android 11+ package visibility: the run request resolves to Termux only. -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

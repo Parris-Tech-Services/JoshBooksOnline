@@ -78,6 +78,36 @@ The physical RUIZU played the converted full film *Pay It Forward (2000)* in AMV
 
 For a film stored in Google Drive, the companion **RUIZU Movie** Termux:Widget shortcut opens Android's Google Drive/Files document picker using Termux:API, converts the selected film to the hardware-tested AMV profile with FFmpeg, verifies output and shares it to RUIZU Sync. Setup/launcher: [tools/ruizu-drive-compare/README.md](../../tools/ruizu-drive-compare/README.md#ruizu-movie--android-home-screen-shortcut-amv-transfer-hand-off). Android still requires choosing the movie and confirming the USB transfer. Full live Drive-to-player acceptance on the Galaxy A55 is **not yet verified**.
 
+## TV episodes from Termux (`ruizu-episodes`)
+
+**Sync episodes** in the app does one thing: it asks [Termux](https://termux.dev) to run one bounded
+[`ruizu-episodes`](../../tools/ruizu-episode-pipeline/README.md) run, then shows what that run did.
+The pipeline stays the only thing that writes episodes to `VIDEO/` and its `pipeline.db` stays the
+only record of what each player has, so the app cannot disagree with it and there is no second
+copy path or second history to keep in step. The app reads that run's log back from the player over
+the same SAF tree it already uses, which is why no extra storage permission is needed.
+
+Requirements, all of which the app reports honestly when they are missing:
+
+- Termux installed, with `allow-external-apps=true` in `~/.termux/termux.properties`, and the
+  pipeline installed by `tools/ruizu-episode-pipeline/install.sh`.
+- A player folder chosen in the app **that already has an identity marker**. The pipeline never
+  writes to an unidentified player, so the button refuses rather than guessing which unit is plugged
+  in.
+
+The run writes `.ruizu-sync-run.log` in the player root. Its last line carries the exit status, and
+**Show last run** displays it; a log without that line is reported as still running, never as a
+finished run.
+
+**Do not run both writers at once.** The app's own transfer and a pipeline run both write into
+`VIDEO/` and nothing takes a lock: neither side recognises the other's in-flight name (the app uses
+`.ruizu-<uuid>.part`, the pipeline uses `.ruizu-partial`), so a transfer started while a pipeline run
+is copying can race it. Start one, let it finish, then start the other.
+
+Not verified on hardware: the Termux `RUN_COMMAND` hand-off and live playback of pipeline-copied
+episodes on either RUIZU unit. The encode profile and the copy method are the ones already proven by
+the earlier scripts.
+
 ## Supported formats
 
 MP3, WAV, FLAC, WMA, APE, AAC, M4A/M4B, OGG/Opus, AIFF, and **already converted AMV** video. Unconverted MP4/MKV and other formats are reported as unsupported.

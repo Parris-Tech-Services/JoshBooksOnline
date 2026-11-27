@@ -48,6 +48,9 @@ import au.com.parristech.ruizusync.R;
 import au.com.parristech.ruizusync.TransferUtils;
 import au.com.parristech.ruizusync.TransferManager;
 import au.com.parristech.ruizusync.TransferService;
+import au.com.parristech.ruizusync.TermuxSync;
+import au.com.parristech.ruizusync.core.RunLogTail;
+import au.com.parristech.ruizusync.core.TermuxSyncRequest;
 import au.com.parristech.ruizusync.core.ByteFormat;
 import au.com.parristech.ruizusync.core.PlayerBinding;
 import au.com.parristech.ruizusync.core.SourceBuckets;
@@ -92,6 +95,8 @@ public final class MainActivity extends Activity implements TransferManager.List
     private static final int REQ_ADD_AMV = 1006;
     private static final int REQ_NOTIFICATIONS = 2001;
     private static final int MAX_AUTO_DOWNLOADS = 5;
+    /** Bounded read of the episode run log; a log larger than this is treated as unusable. */
+    private static final int MAX_EPISODE_LOG_BYTES = 20000;
     private static final int MATCH_PARENT = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP_CONTENT = ViewGroup.LayoutParams.WRAP_CONTENT;
 
@@ -142,6 +147,7 @@ public final class MainActivity extends Activity implements TransferManager.List
     private TextView planStatus;
     private CheckBox planEnabledCheck;
     private boolean planOffered;
+    private TextView episodeStatus;
 
     private List<UsbVolumes.Info> usbVolumes = Collections.emptyList();
     private long destFreeBytes = -1;
@@ -508,6 +514,30 @@ public final class MainActivity extends Activity implements TransferManager.List
         lastRunButtons.addView(copyLogButton, copyParams);
         lastRunCard.addView(lastRunButtons, margins(0, dp(8), 0, 0));
         root.addView(lastRunCard);
+
+        root.addView(sectionHeader("9 · TV episodes (ruizu-episodes)"));
+        LinearLayout episodeCard = card();
+        TextView episodeHelp = label(
+                "Keeps the player topped up with TV episodes from Google Drive. Termux does the "
+                + "downloading, converting and copying, and remembers what is already on each player; "
+                + "this screen only starts a run and shows what it did. Needs Termux with "
+                + "allow-external-apps enabled.",
+                13, false);
+        episodeHelp.setTextColor(getColor(R.color.text_muted));
+        episodeCard.addView(episodeHelp);
+        episodeStatus = label("", 12, false);
+        episodeStatus.setTextColor(getColor(R.color.text_muted));
+        episodeCard.addView(episodeStatus, margins(0, dp(8), 0, dp(8)));
+        LinearLayout episodeRow = new LinearLayout(this);
+        episodeRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button syncEpisodes = secondaryButton("Sync episodes", v -> startEpisodeSync());
+        Button refreshEpisodes = secondaryButton("Show last run", v -> refreshEpisodeLog());
+        episodeRow.addView(syncEpisodes, new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams episodeRefreshParams = new LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f);
+        episodeRefreshParams.leftMargin = dp(8);
+        episodeRow.addView(refreshEpisodes, episodeRefreshParams);
+        episodeCard.addView(episodeRow);
+        root.addView(episodeCard);
 
         root.addView(sectionHeader("Library links"));
         LinearLayout libraryCard = card();
@@ -1064,6 +1094,86 @@ public final class MainActivity extends Activity implements TransferManager.List
                 }
             });
         });
+    }
+
+    /**
+     * Asks Termux to run one bounded episode run.
+     *
+     * <p>The app copies nothing here and keeps no record of what was copied: {@code pipeline.db} in
+     * Termux is the single owner of that truth, so this screen cannot drift out of step with it. All
+     * this does is start a run and read back the log it leaves on the player.
+     */
+    private void startEpisodeSync() {
+        if (state.destinationTree() == null) {
+            toast("Choose the player folder first.");
+            return;
+        }
+        if (state.destinationDeviceId() == null) {
+            toast("This player has no identity marker yet. The episode tool never writes to an "
+                    + "unidentified player, so plug the player in and pick its folder again.");
+            return;
+        }
+        TermuxSync.Result result;
+        try {
+            result = TermuxSync.send(this, TermuxSyncRequest.run(TermuxSyncRequest.DEFAULT_MINUTES));
+        } catch (IllegalArgumentException e) {
+            result = TermuxSync.Result.FAILED;
+        }
+        switch (result) {
+            case SENT:
+                toast("Started in Termux. It keeps going with the screen off.");
+                break;
+            case NOT_INSTALLED:
+                toast("Termux is not installed, so there is nothing to run the episodes.");
+                return;
+            case NO_PERMISSION:
+                toast("Termux has not allowed this app to run commands. In Termux, put "
+                        + "allow-external-apps=true in ~/.termux/termux.properties, then reopen this app.");
+                return;
+            default:
+                toast("Termux did not accept the request. Check that allow-external-apps is enabled.");
+                return;
+        }
+        // A run writes its log as it goes; a few delayed reads let the screen catch up without
+        // pretending the run has finished before the log says so.
+        for (int tick = 1; tick <= 3; tick++) {
+            mainHandler.postDelayed(this::refreshEpisodeLog, tick * 5000L);
+        }
+    }
+
+    /** Reads the run log from the selected player folder and shows what it says. */
+    private void refreshEpisodeLog() {
+        final Uri dest = state.destinationTree();
+        if (dest == null) {
+            toast("Choose the player folder first.");
+            return;
+        }
+        ioExecutor.execute(() -> {
+            String raw;
+            try {
+                DestRepo repo = new DestRepo(getApplicationContext(), dest);
+                DestRepo.Node node = repo.findChild(repo.root(), TermuxSyncRequest.LOG_FILE_NAME);
+                raw = repo.readText(node, MAX_EPISODE_LOG_BYTES);
+            } catch (Throwable t) {
+                raw = null;
+            }
+            final String text = raw;
+            mainHandler.post(() -> {
+                if (!isFinishing()) {
+                    renderEpisodeLog(text);
+                }
+            });
+        });
+    }
+
+    private void renderEpisodeLog(String text) {
+        if (episodeStatus == null) {
+            return;
+        }
+        String tail = RunLogTail.tail(text);
+        episodeStatus.setText(tail.isEmpty()
+                ? RunLogTail.describe(text)
+                : RunLogTail.describe(text) + "\n" + tail);
     }
 
     private void browsePodcastFeed() {

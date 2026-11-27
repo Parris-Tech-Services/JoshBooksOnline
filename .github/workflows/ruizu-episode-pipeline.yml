@@ -1,0 +1,45 @@
+name: RUIZU episode pipeline
+
+on:
+  pull_request:
+    paths:
+      - 'tools/ruizu-episode-pipeline/**'
+      - '.github/workflows/ruizu-episode-pipeline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/ruizu-episode-pipeline/**'
+      - '.github/workflows/ruizu-episode-pipeline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, typecheck, tests, CRAP gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tools/ruizu-episode-pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg (the tests encode real AMV files from synthetic video)
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - name: Install check tools (pinned ranges)
+        run: python -m pip install 'ruff>=0.16,<0.17' 'mypy>=2.3,<3' 'coverage>=7.6,<8' 'lizard>=1.24.0,<2'
+      - name: Lint
+        run: ruff check ruizu_episodes tests crap_gate.py
+      - name: Typecheck
+        run: mypy
+      - name: Shell syntax
+        run: bash -n install.sh
+      - name: Tests (fake Drive over local HTTP, real curl and ffmpeg, no personal data or network)
+        run: python -m coverage run --branch --source=ruizu_episodes -m unittest discover -s tests -t . -v
+      - name: Coverage
+        run: python -m coverage report && python -m coverage xml -o coverage.xml
+      - name: CRAP gate (same formula and threshold as crap4all-quality-gate.yml)
+        run: python crap_gate.py coverage.xml ruizu_episodes
