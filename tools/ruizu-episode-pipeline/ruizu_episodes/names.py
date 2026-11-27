@@ -110,22 +110,29 @@ def player_filename(label: str) -> str:
     return label + PLAYER_SUFFIX
 
 
-def player_folder(label: str) -> str | None:
-    """The show folder an episode belongs in, or None for a label with no episode code.
+MOVIES_FOLDER = "Movies"
 
-    Numbered episodes go into a folder named after the show so a player that browses folders
-    shows one entry per show. Extras and films stay in VIDEO/ itself, because they have no code
-    to group by and a folder each would be noise.
+
+def player_folder(label: str) -> str:
+    """The folder an episode belongs in, relative to VIDEO/.
+
+    Three cases, in order:
+    * a numbered episode, or a bonus feature that belongs to a season ("Buffy S05 - ...") — the
+      show's own folder, so a player that browses folders shows one entry per show;
+    * anything else with no season at all, which is a film — one ``Movies`` folder, rather than a
+      folder per title;
+    * a label that names nothing at all still gets a folder, because guessing is what puts a file
+      somewhere the reader will not look for it.
     """
-    match = _PLAYER_LABEL.match(label)
-    return match.group("show") if match else None
+    show, identity = identify_label(label)
+    if identity.kind == "episode" or identity.season is not None:
+        return show
+    return MOVIES_FOLDER
 
 
 def player_relative_path(label: str) -> str:
     """Where a new copy is written, relative to VIDEO/."""
-    folder = player_folder(label)
-    name = player_filename(label)
-    return f"{folder}/{name}" if folder else name
+    return f"{player_folder(label)}/{player_filename(label)}"
 
 
 def player_spellings(label: str) -> tuple[str, ...]:
@@ -135,10 +142,9 @@ def player_spellings(label: str) -> tuple[str, ...]:
     rename rather than a re-download, and an episode already on the card is never copied twice.
     """
     name, legacy, folder = player_filename(label), legacy_player_filename(label), player_folder(label)
-    candidates = [name, legacy]
-    if folder:
-        candidates = [f"{folder}/{name}", f"{folder}/{legacy}", name, legacy]
-    return tuple(dict.fromkeys(candidates))
+    # The folder the file belongs in now, then the same pair flat: those are the two layouts this
+    # tool has written, and reading both means moving a card is a rename, not a re-download.
+    return tuple(dict.fromkeys([f"{folder}/{name}", f"{folder}/{legacy}", name, legacy]))
 
 
 def legacy_player_filename(label: str) -> str:

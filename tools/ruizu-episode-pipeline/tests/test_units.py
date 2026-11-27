@@ -45,6 +45,22 @@ class NamesTest(unittest.TestCase):
         self.assertEqual("Buffy S05 - Buffy Abroad" + names.PLAYER_SUFFIX,
                          names.player_filename("Buffy S05 - Buffy Abroad"))
 
+    def test_a_bonus_feature_goes_in_its_shows_folder(self):
+        self.assertEqual("Buffy/Buffy S05 - Buffy Abroad - RUIZU.amv",
+                         names.player_relative_path("Buffy S05 - Buffy Abroad"))
+
+    def test_a_film_with_no_season_goes_in_one_movies_folder(self):
+        # One Movies folder, not a folder per title: the film's own name is the filename.
+        self.assertEqual("Movies/Pay It Forward (2000) - RUIZU.amv",
+                         names.player_relative_path("Pay It Forward (2000)"))
+        self.assertEqual("Movies/I Still Know What You Did Last Summer (1998) - RUIZU.amv",
+                         names.player_relative_path("I Still Know What You Did Last Summer (1998)"))
+
+    def test_every_layout_this_tool_has_written_is_still_recognised(self):
+        spellings = names.player_spellings("Buffy S05 - Buffy Abroad")
+        self.assertIn("Buffy/Buffy S05 - Buffy Abroad - RUIZU.amv", spellings)
+        self.assertIn("Buffy S05 - Buffy Abroad - RUIZU.amv", spellings)
+
     def test_the_earlier_spelling_is_still_available_for_reading_a_player(self):
         self.assertEqual("The Originals S01E07" + names.PLAYER_SUFFIX,
                          names.legacy_player_filename("The Originals S01E07"))
