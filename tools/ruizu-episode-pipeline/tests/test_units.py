@@ -34,6 +34,23 @@ class NamesTest(unittest.TestCase):
         self.assertNotIn("/", ident.label)
         self.assertFalse(any(c in ident.label for c in '<>:"|?*\\'))
 
+    def test_player_filenames_put_the_episode_code_first(self):
+        self.assertEqual("S01E07 - The Originals - RUIZU.amv",
+                         names.player_filename("The Originals S01E07"))
+        self.assertEqual("S02E11 - How I Met Your Mother - RUIZU.amv",
+                         names.player_filename("How I Met Your Mother S02E11"))
+
+    def test_a_label_without_an_episode_code_keeps_the_show_first_spelling(self):
+        # Extras such as "Buffy S05 - Buffy Abroad" have no code to move to the front.
+        self.assertEqual("Buffy S05 - Buffy Abroad" + names.PLAYER_SUFFIX,
+                         names.player_filename("Buffy S05 - Buffy Abroad"))
+
+    def test_the_earlier_spelling_is_still_available_for_reading_a_player(self):
+        self.assertEqual("The Originals S01E07" + names.PLAYER_SUFFIX,
+                         names.legacy_player_filename("The Originals S01E07"))
+        self.assertNotEqual(names.player_filename("The Originals S01E07"),
+                            names.legacy_player_filename("The Originals S01E07"))
+
     def test_legacy_labels_are_understood(self):
         show, ident = names.identify_label("Buffy S05 - Buffy Abroad")
         self.assertEqual((show, ident.kind, ident.season), ("Buffy", "extra", 5))

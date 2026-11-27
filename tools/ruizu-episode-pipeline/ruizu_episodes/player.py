@@ -80,11 +80,24 @@ def write_identity(root: Path, name: str, now_ms: int | None = None) -> Identity
 
 
 def inventory(root: Path) -> dict[str, int]:
-    """Regular files in VIDEO/ with their sizes (symlinks skipped)."""
-    found = {}
-    for entry in os.scandir(root / "VIDEO"):
-        if entry.is_file(follow_symlinks=False):
-            found[entry.name] = entry.stat(follow_symlinks=False).st_size
+    """Regular files in VIDEO/ and its subfolders, keyed by path relative to VIDEO/.
+
+    Episodes live in per-show folders, so the listing is walked rather than read one level deep.
+    Symlinks are skipped and the walk does not follow them, so a card cannot lead the tool out of
+    its own folder.
+    """
+    found: dict[str, int] = {}
+    base = root / "VIDEO"
+    for current, dirs, names in os.walk(base, followlinks=False):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(current, d))]
+        for name in names:
+            path = Path(current) / name
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                found[path.relative_to(base).as_posix()] = path.stat().st_size
+            except OSError:
+                continue
     return found
 
 
@@ -131,8 +144,11 @@ def _write_synced(source: Path, partial: Path) -> None:
 
 def copy_verified(source: Path, video_dir: Path, dest_name: str, expected_sha256: str) -> float:
     """Copy `source` to video_dir/dest_name, proving the bytes on the card. Returns seconds taken."""
+    if ".." in Path(dest_name).parts or Path(dest_name).is_absolute():
+        raise CopyError(f"{dest_name}: not a path inside the player's VIDEO folder")
     final = video_dir / dest_name
     partial = video_dir / (dest_name + PARTIAL_SUFFIX)
+    partial.parent.mkdir(parents=True, exist_ok=True)
     if final.exists() or partial.exists():
         raise CopyError(f"{dest_name} (or its partial) already on the player; reconcile first")
     started = time.monotonic()
@@ -143,7 +159,7 @@ def copy_verified(source: Path, video_dir: Path, dest_name: str, expected_sha256
         if final.exists():
             raise CopyError(f"{dest_name} appeared during the copy; leaving it alone")
         os.rename(partial, final)
-        _fsync_dir(video_dir)
+        _fsync_dir(final.parent)
     except BaseException:
         try:
             partial.unlink(missing_ok=True)  # only ever the O_EXCL file this call created

@@ -24,6 +24,7 @@ _NOISE = re.compile(
 _UNSAFE = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]+')
 MAX_LABEL = 120
 PLAYER_SUFFIX = " - RUIZU.amv"
+_PLAYER_LABEL = re.compile(r"^(?P<show>.+?) S(?P<season>\d{1,2})E(?P<episode>\d{1,3})$")
 
 
 @dataclass(frozen=True)
@@ -96,4 +97,55 @@ def identify_label(label: str) -> tuple[str, EpisodeIdentity]:
 
 
 def player_filename(label: str) -> str:
+    """The name an episode gets on the player.
+
+    The episode code comes first — ``S01E07 - The Originals - RUIZU.amv`` — because a player holds
+    every show in one flat list, so sorting by code is how someone looks for the next episode
+    rather than hunting through show names. The show name is kept in full.
+    """
+    match = _PLAYER_LABEL.match(label)
+    if match:
+        code = f"S{int(match.group('season')):02d}E{int(match.group('episode')):02d}"
+        return f"{code} - {match.group('show')}{PLAYER_SUFFIX}"
+    return label + PLAYER_SUFFIX
+
+
+def player_folder(label: str) -> str | None:
+    """The show folder an episode belongs in, or None for a label with no episode code.
+
+    Numbered episodes go into a folder named after the show so a player that browses folders
+    shows one entry per show. Extras and films stay in VIDEO/ itself, because they have no code
+    to group by and a folder each would be noise.
+    """
+    match = _PLAYER_LABEL.match(label)
+    return match.group("show") if match else None
+
+
+def player_relative_path(label: str) -> str:
+    """Where a new copy is written, relative to VIDEO/."""
+    folder = player_folder(label)
+    name = player_filename(label)
+    return f"{folder}/{name}" if folder else name
+
+
+def player_spellings(label: str) -> tuple[str, ...]:
+    """Every name this tool may find an episode under on a player, newest convention first.
+
+    Reading all of them means a layout change (flat to per-show folders) or a naming change is a
+    rename rather than a re-download, and an episode already on the card is never copied twice.
+    """
+    name, legacy, folder = player_filename(label), legacy_player_filename(label), player_folder(label)
+    candidates = [name, legacy]
+    if folder:
+        candidates = [f"{folder}/{name}", f"{folder}/{legacy}", name, legacy]
+    return tuple(dict.fromkeys(candidates))
+
+
+def legacy_player_filename(label: str) -> str:
+    """The spelling earlier versions wrote: ``The Originals S01E07 - RUIZU.amv``.
+
+    Still recognised when reading a player, so episodes copied before this change are neither
+    forgotten (and offered again) nor duplicated under a second name. Only new copies use the form
+    above.
+    """
     return label + PLAYER_SUFFIX

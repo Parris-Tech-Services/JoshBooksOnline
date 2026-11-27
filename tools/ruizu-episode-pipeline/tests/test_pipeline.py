@@ -9,7 +9,8 @@ from pathlib import Path
 from ruizu_episodes import player
 from ruizu_episodes.config import PlayerPolicy
 from ruizu_episodes.media import Media, sha256_file
-from ruizu_episodes.names import PLAYER_SUFFIX
+from ruizu_episodes.names import (PLAYER_SUFFIX, legacy_player_filename, player_filename,
+                                  player_relative_path)
 from ruizu_episodes.pipeline import Pipeline, RunOptions
 from ruizu_episodes.process import Runner
 from ruizu_episodes.store import Store
@@ -60,10 +61,11 @@ class PipelineTest(unittest.TestCase):
     def test_first_run_discovers_prepares_and_copies_one_of_each_allowed_show(self):
         report = self.run_once()
         self.assertEqual(report.copied, ["Glee S01E01", "Scrubs S01E01"])
-        self.assertEqual(self.sandbox.video_files(), ["Glee S01E01" + PLAYER_SUFFIX, "Scrubs S01E01" + PLAYER_SUFFIX])
-        for name in self.sandbox.video_files():
-            on_player = self.sandbox.player / "VIDEO" / name
-            staged = self.sandbox.settings.stage_dir / name.replace(PLAYER_SUFFIX, ".amv")
+        self.assertEqual(self.sandbox.video_files(),
+                         [player_relative_path("Glee S01E01"), player_relative_path("Scrubs S01E01")])
+        for label in ("Glee S01E01", "Scrubs S01E01"):
+            on_player = self.sandbox.player / "VIDEO" / player_relative_path(label)
+            staged = self.sandbox.settings.stage_dir / f"{label}.amv"
             self.assertEqual(sha256_file(on_player), sha256_file(staged))
             Media(Runner()).verify_amv(on_player)
         self.assertEqual(self.downloads_of("Girls S01E01"), 0, "a show the player is not allowed is never fetched")
@@ -108,17 +110,36 @@ class PipelineTest(unittest.TestCase):
 
     def test_an_episode_removed_by_hand_is_not_pushed_back(self):
         self.run_once()
-        (self.sandbox.player / "VIDEO" / ("Glee S01E01" + PLAYER_SUFFIX)).unlink()
+        (self.sandbox.player / "VIDEO" / player_relative_path("Glee S01E01")).unlink()
         self.clock.advance(60)
         report = self.run_once()
         self.assertNotIn("Glee S01E01", report.copied)
         self.assertIn("Glee S01E02", report.copied)
 
+    def test_copied_episodes_go_into_a_show_folder_named_code_first(self):
+        self.run_once()
+        self.assertEqual(self.sandbox.video_files(),
+                         [player_relative_path("Glee S01E01"), player_relative_path("Scrubs S01E01")])
+        self.assertEqual(player_relative_path("Glee S01E01"), "Glee/S01E01 - Glee - RUIZU.amv")
+
+    def test_an_episode_left_under_the_earlier_spelling_still_counts_as_had(self):
+        self.run_once()
+        video = self.sandbox.player / "VIDEO"
+        # Put the same episode back the way an earlier version of this tool would have left it:
+        # flat, with the show first. It is still the same episode, not a missing one.
+        next(f for f in (video / "Glee").iterdir() if f.name.startswith("S01E01 - Glee")).rename(
+            video / legacy_player_filename("Glee S01E01"))
+        self.clock.advance(60)
+        report = self.run_once()
+        self.assertNotIn("Glee S01E01", report.copied)
+
     def test_an_interrupted_copy_is_cleaned_up_and_redone(self):
         self.run_once(RunOptions(copy=False))  # prepare only
         p = self.pipeline()
         ep = next(e for e in p.store.episodes() if e.label == "Glee S01E01")
-        partial = self.sandbox.player / "VIDEO" / ("Glee S01E01" + PLAYER_SUFFIX + player.PARTIAL_SUFFIX)
+        partial = (self.sandbox.player / "VIDEO" / player_relative_path("Glee S01E01")).with_name(
+            player_filename("Glee S01E01") + player.PARTIAL_SUFFIX)
+        partial.parent.mkdir(parents=True, exist_ok=True)
         partial.write_bytes(p.staged_path(ep).read_bytes()[:1000])  # what a killed run leaves
         p.store.set_copy(self.kid.id, ep.drive_id, "copying", 0)
         report = p.run(RunOptions(scan=False, fetch=False))
@@ -129,7 +150,8 @@ class PipelineTest(unittest.TestCase):
         self.run_once(RunOptions(copy=False))
         p = self.pipeline()
         ep = next(e for e in p.store.episodes() if e.label == "Scrubs S01E01")
-        final = self.sandbox.player / "VIDEO" / ("Scrubs S01E01" + PLAYER_SUFFIX)
+        final = self.sandbox.player / "VIDEO" / player_relative_path("Scrubs S01E01")
+        final.parent.mkdir(parents=True, exist_ok=True)
         final.write_bytes(p.staged_path(ep).read_bytes()[:5000])
         p.store.set_copy(self.kid.id, ep.drive_id, "copying", 0)
         p.run(RunOptions(scan=False, fetch=False))
@@ -162,14 +184,18 @@ class PipelineTest(unittest.TestCase):
         self.run_once(RunOptions(copy=False))
         p = self.pipeline()
         ep = next(e for e in p.store.episodes() if e.label == "Glee S01E01")
+        # Written before this tool, so it carries the earlier show-first spelling.
         old_copy = self.sandbox.player / "VIDEO" / ("Glee S01E01" + PLAYER_SUFFIX)
-        old_copy.write_bytes(p.staged_path(ep).read_bytes()[:7000])  # no record: written before this tool
+        old_copy.write_bytes(p.staged_path(ep).read_bytes()[:7000])
         report = p.run(RunOptions(scan=False, fetch=False))
         self.assertIn("Glee S01E01", report.copied)
-        self.assertEqual(sha256_file(old_copy), sha256_file(p.staged_path(ep)))
+        repaired = self.sandbox.player / "VIDEO" / player_relative_path("Glee S01E01")
+        self.assertEqual(sha256_file(repaired), sha256_file(p.staged_path(ep)))
+        self.assertFalse(old_copy.exists(), "the truncated earlier-spelling copy is not left behind")
 
     def test_someone_elses_file_with_the_same_name_is_left_alone(self):
-        final = self.sandbox.player / "VIDEO" / ("Glee S01E01" + PLAYER_SUFFIX)
+        final = self.sandbox.player / "VIDEO" / player_relative_path("Glee S01E01")
+        final.parent.mkdir(parents=True, exist_ok=True)
         final.write_bytes(b"a file put there by hand")
         report = self.run_once()
         self.assertEqual(final.read_bytes(), b"a file put there by hand")

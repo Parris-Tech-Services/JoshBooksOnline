@@ -237,4 +237,8 @@ class Sandbox:
         return config
 
     def video_files(self) -> list[str]:
-        return sorted(p.name for p in (self.player / "VIDEO").iterdir())
+        """Every file under VIDEO/, by path relative to it (episodes live in show folders)."""
+        base = self.player / "VIDEO"
+        if not base.is_dir():
+            return []
+        return sorted(p.relative_to(base).as_posix() for p in base.rglob("*") if p.is_file())

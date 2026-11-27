@@ -11,7 +11,7 @@ from pathlib import Path
 from ruizu_episodes import cli, library, player
 from ruizu_episodes import config as cfg
 from ruizu_episodes.media import Media, sha256_file
-from ruizu_episodes.names import PLAYER_SUFFIX
+from ruizu_episodes.names import PLAYER_SUFFIX, player_relative_path
 from ruizu_episodes.pipeline import Pipeline, RunOptions
 from ruizu_episodes.process import Runner
 from ruizu_episodes.store import Store
@@ -85,7 +85,7 @@ class LegacyImportTest(unittest.TestCase):
         report = Pipeline(self.sandbox.settings, config, self.store, OfflineTermux(), FakeClock()).run(
             RunOptions(scan=False, fetch=False))
         self.assertEqual(report.copied, ["How I Met Your Mother S02E11"])
-        copied = video / ("How I Met Your Mother S02E11" + PLAYER_SUFFIX)
+        copied = video / player_relative_path("How I Met Your Mother S02E11")
         staged = self.sandbox.settings.stage_dir / "How I Met Your Mother S02E11.amv"
         self.assertEqual(sha256_file(copied), sha256_file(staged))
         self.assertEqual(self.store.copies(kid.id)[LEGACY["How I Met Your Mother S02E10"]], "present")

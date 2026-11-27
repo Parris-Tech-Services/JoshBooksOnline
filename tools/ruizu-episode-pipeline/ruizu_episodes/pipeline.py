@@ -18,7 +18,7 @@ from . import library, planner, player, termux
 from .config import Config, PlayerPolicy
 from .drive import DriveClient, DriveError
 from .media import Media, MediaError, sha256_file
-from .names import player_filename
+from .names import legacy_player_filename, player_filename, player_relative_path, player_spellings
 from .process import Runner
 from .settings import Settings
 from .store import Episode, Store
@@ -142,6 +142,9 @@ class Pipeline:
         if options.fetch:
             self.stage(budget, options)
         if connected and player.is_mounted(connected.root):
+            # Discovery may have named episodes that were already on the card, so reconcile again
+            # before copying: otherwise the first run copies a second copy of what is already there.
+            self.reconcile(connected)
             self.copy_ready(connected, budget)
         self.say(f"run finished: {self.report.summary()}")
         return self.report
@@ -187,39 +190,58 @@ class Pipeline:
     def _mark_removed(self, conn: Connected, episodes: dict[str, Episode], files: dict[str, int]) -> None:
         """Deleted from the player by hand: remember that, so it is not pushed back."""
         for drive_id, state in self.store.copies(conn.identity.id).items():
-            if state in ("verified", "present") and player_filename(episodes[drive_id].label) not in files:
+            if state not in ("verified", "present"):
+                continue
+            label = episodes[drive_id].label
+            # Every spelling counts as the same episode: the per-show folder path written now, the
+            # code-first flat name, and the show-first flat name earlier versions wrote. Reading all
+            # of them means restructuring the card is a rename rather than a re-download.
+            if not any(name in files for name in player_spellings(label)):
                 self.store.set_copy(conn.identity.id, drive_id, "removed", self.now())
 
     def _adopt_found(self, conn: Connected, episodes: dict[str, Episode], files: dict[str, int]) -> None:
         """Episodes already on the player (copied by the old scripts, or by hand) count as had,
         except a provably truncated copy of our own staged file, which is replaced."""
         known = self.store.copies(conn.identity.id)
-        by_name = {player_filename(e.label): e for e in episodes.values()}
+        by_name: dict[str, Episode] = {}
+        for episode in episodes.values():
+            for spelling in player_spellings(episode.label):
+                by_name.setdefault(spelling, episode)
         for name, size in files.items():
             ep = by_name.get(name)
             if ep is None or ep.drive_id in known:
                 continue
-            if self._is_truncated_copy(conn, ep, size):
+            if self._is_truncated_copy(conn, ep, size, name):
                 (conn.video / name).unlink()
                 self.say(f"removed a truncated copy of {ep.label} left by an earlier interrupted copy; "
                          "it will be copied again")
             else:
                 self.store.set_copy(conn.identity.id, ep.drive_id, "present", self.now(), size)
 
-    def _is_truncated_copy(self, conn: Connected, ep: Episode, size: int) -> bool:
+    def _is_truncated_copy(self, conn: Connected, ep: Episode, size: int, name: str) -> bool:
         staged = self.staged_path(ep)
         if ep.state != "staged" or not ep.amv_bytes or size >= ep.amv_bytes or not staged.is_file():
             return False
-        return player.is_own_prefix(staged, conn.video / player_filename(ep.label))
+        return player.is_own_prefix(staged, conn.video / name)
 
     def _resolve_interrupted(self, conn: Connected, ep: Episode) -> None:
         """A copy was cut off. Remove only what is provably ours; keep anything verified."""
-        name = player_filename(ep.label)
-        final, partial = conn.video / name, conn.video / (name + player.PARTIAL_SUFFIX)
+        name = player_relative_path(ep.label)
         staged = self.staged_path(ep)
-        if partial.exists():
-            partial.unlink()
+        # An interrupted copy can carry any spelling this tool has written over time, in a show
+        # folder or flat. All are provably this episode's, so all are cleaned rather than left
+        # behind as unidentifiable junk on the card.
+        partials = [conn.video / (candidate + player.PARTIAL_SUFFIX)
+                    for candidate in player_spellings(ep.label)]
+        removed = [p.name for p in partials if p.exists()]
+        for leftover in partials:
+            if leftover.exists():
+                leftover.unlink()
+        if removed:
             self.say(f"removed the unfinished copy of {ep.label} from an interrupted run")
+        final = next((conn.video / candidate for candidate in player_spellings(ep.label)
+                      if (conn.video / candidate).exists()), conn.video / name)
+        name = final.relative_to(conn.video).as_posix()
         if not final.exists():
             self.store.clear_copy(conn.identity.id, ep.drive_id)
         elif ep.amv_sha256 and sha256_file(final, drop_cache=True) == ep.amv_sha256:
@@ -285,7 +307,7 @@ class Pipeline:
             return False
         self.store.set_copy(conn.identity.id, ep.drive_id, "copying", self.now())
         try:
-            seconds = player.copy_verified(staged, conn.video, player_filename(ep.label), digest)
+            seconds = player.copy_verified(staged, conn.video, player_relative_path(ep.label), digest)
         except (player.CopyError, OSError) as exc:
             still_mounted = player.is_mounted(conn.root)
             if still_mounted:
